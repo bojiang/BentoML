@@ -39,37 +39,45 @@ class Bucket:
 class Optimizer:
     N_OUTBOUND_SAMPLE = 500
     N_OUTBOUND_WAIT_SAMPLE = 20
+    N_INBOUND_INTE = 2000
 
     def __init__(self):
         self.outbound_stat = Bucket(self.N_OUTBOUND_SAMPLE)
         self.outbound_wait_stat = Bucket(self.N_OUTBOUND_WAIT_SAMPLE)
+        self.inbound_inte_stat = Bucket(self.N_INBOUND_INTE)
         self.outbound_a = 0.0001
         self.outbound_b = 0
         self.outbound_wait = 0.01
+        self.inbound_inte = 0.1
+        self._inbound_last_time = None
 
     async def adaptive_wait(self, parade, max_time):
-        dt = 0.001
-        decay = 0.9
+        # dt = 0.001
+        # decay = 0.9
         while True:
             now = time.time()
             w0 = now - parade.time_first
-            wn = now - parade.time_last
+            # wn = now - parade.time_last
             n = parade.length
             a = max(self.outbound_a, 0)
+            b = max(self.outbound_b, 0)
 
             if w0 >= max_time:
                 print("warning: max latency reached")
                 break
-            if max(n - 1, 1) * (wn + dt + a) <= self.outbound_wait * decay:
-                await asyncio.sleep(dt)
-                continue
+            tw = (-b * self.inbound_inte ** 2) / (4 * a + 2 * self.inbound_inte)
+            print(dict(inte=self.inbound_inte, n=n, a=a, b=b, tw=tw, w0=w0))
+            await asyncio.sleep(tw)
+            # if max(n - 1, 1) * (wn + dt + a) <= self.outbound_wait * decay:
+            # await asyncio.sleep(dt)
+            # continue
             break
 
     def log_outbound_time(self, info):
         if info[0] < 5:  # skip all small batch
             return
         self.outbound_stat.put(info)
-        if random.random() < 0.05:
+        if random.random() < 0.1:
             x = tuple((i, 1) for i, _ in self.outbound_stat.data)
             y = tuple(i for _, i in self.outbound_stat.data)
             self.outbound_a, self.outbound_b = np.linalg.lstsq(x, y, rcond=None)[0]
@@ -79,6 +87,15 @@ class Optimizer:
         self.outbound_wait = (
             sum(self.outbound_wait_stat.data) * 1.0 / len(self.outbound_wait_stat)
         )
+
+    def log_inbound_inte(self, info):
+        if self._inbound_last_time is not None:
+            self.inbound_inte_stat.put(info - self._inbound_last_time)
+        self._inbound_last_time = info
+        if random.random() < 0.01:
+            self.inbound_inte = sum(self.inbound_inte_stat.data) / len(
+                self.inbound_inte_stat
+            )
 
 
 class Parade:
@@ -102,6 +119,7 @@ class Parade:
         return:
             the output index in parade.batch_output
         '''
+        self.optimizer.log_inbound_inte(time.time())
         self.batch_input[self.length] = data
         self.length += 1
         if self.length == self.max_size:
@@ -118,6 +136,7 @@ class Parade:
             async with self.outbound_sema:
                 self.status = self.STATUS_CLOSED
                 _time_start = time.time()
+                print(dict(n=self.length))
                 self.optimizer.log_outbound_wait(_time_start - self.time_first)
                 self.batch_output = await call(self.batch_input[: self.length])
                 self.optimizer.log_outbound_time(

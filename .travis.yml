@@ -20,6 +20,7 @@ matrix:
       python: "3.6"
       before_install:
         - choco install python3
+        - choco install pip
         - export PATH="/c/Python37:/c/Python37/Scripts:$PATH"
 
 script:

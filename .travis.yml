@@ -13,6 +13,15 @@ install:
   - "pip install ."
   - "pip install --upgrade .[test]"
 
+matrix:
+  include:
+    - os: windows
+      language: sh
+      python: "3.6"
+      before_install:
+        - choco install python3
+        - export PATH="/c/Python37:/c/Python37/Scripts:$PATH"
+
 script:
   - pytest tests --cov=bentoml
 

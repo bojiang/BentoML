@@ -21,6 +21,7 @@ matrix:
       before_install:
         - choco install python --version 3.6
         - export PATH="/c/Python36:/c/Python36/Scripts:$PATH"
+        - python -m pip install -U pip --user
 
 script:
   - pytest tests --cov=bentoml

@@ -103,6 +103,7 @@ class Stat:
         self.exec_time_ps = DynamicBucketMerge(2, 10)
         self.client_busy = 0
         self.exceptions = defaultdict(list)
+        self.peak = [0] * 7
         self._sess_start_time = 0
         self._sess_stop_time = 0
 
@@ -142,19 +143,21 @@ class Stat:
         r = (
             (
                 "succ",
-                f"{self.success}",
-                f"{self.succ_ps.sum(now)}",
-                f"{self.succ_time_ps.mean(now)}",
-                f"{(1 - self.client_busy / max(self.req_total, 1)) * 100}",
+                self.success,
+                self.succ_ps.sum(now),
+                self.succ_time_ps.mean(now),
+                (1 - self.client_busy / max(self.req_total, 1)) * 100,
             ),
             (
                 "fail",
-                f"{self.fail}",
-                f"{self.exec_ps.sum(now)}",
-                f"{self.exec_time_ps.mean(now)}",
+                self.fail,
+                self.exec_ps.sum(now),
+                self.exec_time_ps.mean(now),
                 "",
             ),
         )
+        if not self.peak or r[0][2] > self.peak[2]:
+            self.peak = r[0]
 
         print(tabulate(r, headers=headers, tablefmt="fancy_grid"))
 
@@ -190,6 +193,7 @@ class Stat:
                 ps_fail[1],
                 ps_fail[2],
             ),
+            ("peak succ", self.peak[1], self.peak[2], self.peak[3], "", "", "",),
         )
 
         print(tabulate(r, headers=headers, tablefmt="fancy_grid"))
@@ -384,19 +388,28 @@ class BenchmarkClient:
         while self.kill():
             pass
 
-    async def _start_output(self):
+    async def _start_output(self, timeout, break_threshold=None):
+        start_time = time.time()
         while self.status in {self.STATUS_SPAWNING, self.STATUS_SPAWNED}:
             print("")
             self.stat.print_step()
             await asyncio.sleep(2)
+            if time.time() - start_time >= timeout:
+                break
+            if (
+                break_threshold
+                and self.stat.fail / (self.stat.req_total or math.nan) > break_threshold
+            ):
+                break
 
-    async def _start_session(self, session_time, total_user, spawn_speed):
+    async def _start_session(
+        self, session_time, total_user, spawn_speed, break_threshold=None,
+    ):
         try:
             print("======= Session started! =======")
             self.stat._sess_start_time = time.time()
             self.batch_spawn(total_user, spawn_speed)
-            asyncio.get_event_loop().create_task(self._start_output())
-            await asyncio.sleep(session_time)
+            await self._start_output(session_time, break_threshold)
         finally:
             self.killall()
             self.stat._sess_stop_time = time.time()
@@ -411,19 +424,24 @@ class BenchmarkClient:
                 loop = asyncio.get_event_loop()
                 loop.stop()
 
-    def start_session(self, session_time, total_user, spawn_speed=None):
+    def start_session(
+        self, session_time, total_user, spawn_speed=None, break_threshold=None,
+    ):
         """
         To start a benchmark session. If it's running It will return immediately.
         Paras:
         * session_time: session time in sec
         * total_user: user count need to be spawned
         * spawn_speed: user spawnning speed, in user/sec
+        * break_threshold: once the failure_rate reached this value, stop the session
         """
         if spawn_speed is None:
             spawn_speed = total_user
         loop = asyncio.get_event_loop()
         if not loop.is_running():
             self._stop_loop_flag = True
-        loop.create_task(self._start_session(session_time, total_user, spawn_speed))
+        loop.create_task(
+            self._start_session(session_time, total_user, spawn_speed, break_threshold)
+        )
         if not loop.is_running():
             loop.run_forever()

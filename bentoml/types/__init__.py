@@ -37,6 +37,8 @@ from werkzeug.formparser import parse_form_data
 from werkzeug.http import parse_options_header
 
 from bentoml import config
+from bentoml.types.standard import JSON, AwsLambdaEvent, JsonSerializable
+from bentoml.types.utils import LazyDict
 from bentoml.utils.dataclasses import json_serializer
 
 BATCH_HEADER = config("apiserver").get("batch_request_header")
@@ -271,12 +273,6 @@ class HTTPResponse:
             status=self.status, headers=self.headers.items(), response=self.body
         )
 
-
-# https://tools.ietf.org/html/rfc7159#section-3
-JsonSerializable = Union[bool, None, Dict, List, int, float, str]
-
-# https://docs.aws.amazon.com/lambda/latest/dg/python-handler.html
-AwsLambdaEvent = Union[Dict, List, str, int, float, None]
 
 Input = TypeVar("Input")
 Output = TypeVar("Output")

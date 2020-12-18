@@ -35,6 +35,7 @@ class PickleModel(object):
     def predict_json(self, input_datas):
         return input_datas
 
+
 @bentoml.env(infer_pip_packages=True)
 @bentoml.artifacts([PickleArtifact("model"), SklearnModelArtifact('sk_model')])
 class ExampleBentoService(bentoml.BentoService):
@@ -79,17 +80,13 @@ class ExampleBentoService(bentoml.BentoService):
     def predict_json(self, input_datas):
         return self.artifacts.model.predict_json(input_datas)
 
+    CUSTOM_ROUTE = "$~!@%^&*()_-+=[]\\|;:,./predict"
+
     @bentoml.api(
-        route="/v1/predict_json", input=JsonInput(), batch=True,
+        route=CUSTOM_ROUTE, input=JsonInput(), batch=True,
     )
-    def predict_json_v1(self, input_datas):
-        return self.artifacts.model.predict_json(input_datas)
-    
-    @bentoml.api(
-            route="/$~!@%^&*()_-+=[]\|;:,./predict_json", input=JsonInput(), batch=True,
-    )
-    def predict_json_v1(self, input_datas):
-        return self.artifacts.model.predict_json(input_datas)
+    def customezed_route(self, input_datas):
+        return input_datas
 
     @bentoml.api(input=JsonInput(), batch=True)
     def predict_strict_json(self, input_datas, tasks: Sequence[InferenceTask] = None):

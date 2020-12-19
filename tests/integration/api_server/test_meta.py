@@ -20,3 +20,13 @@ async def test_customized_route(host):
         data=json.dumps("hello"),
         assert_data=bytes('"hello"', 'ascii'),
     )
+
+
+@pytest.mark.asyncio
+async def test_customized_request_schema(host):
+    await pytest.assert_request(
+        "GET",
+        f"http://{host}/docs.json",
+        headers=(("Content-Type", "application/json"),),
+        assert_data="",
+    )

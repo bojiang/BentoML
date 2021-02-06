@@ -8,8 +8,6 @@ GIT_ROOT=$(git rev-parse --show-toplevel)
 
 cd "$GIT_ROOT" || exit
 
-python -m pip install -e . -q
-
 # Run test
 PROJECT_PATH="$GIT_ROOT/tests/integration/projects/general"
 BUILD_PATH="$PROJECT_PATH/build"

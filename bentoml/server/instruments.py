@@ -93,7 +93,7 @@ class InstrumentMiddleware:
 
 @inject
 def setup_prometheus_multiproc_dir(
-    lock: multiprocessing.Lock = None,
+    lock: multiprocessing.synchronize.Lock = None,
     prometheus_multiproc_dir: str = Provide[BentoMLContainer.prometheus_multiproc_dir],
 ):
     """

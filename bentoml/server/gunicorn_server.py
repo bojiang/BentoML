@@ -83,7 +83,7 @@ def gunicorn_bento_server(
             port: int = default_port,
             timeout: int = default_timeout,
             workers: int = default_workers,
-            prometheus_lock: Optional[multiprocessing.Lock] = None,
+            prometheus_lock: Optional[multiprocessing.synchronize.Lock] = None,
             enable_swagger: bool = default_enable_swagger,
             max_request_size: int = default_max_request_size,
             loglevel: str = default_loglevel,

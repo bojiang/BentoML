@@ -14,11 +14,14 @@
 
 import logging
 import multiprocessing
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from bentoml.utils import reserve_free_port
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    Lock = multiprocessing.synchronize.Lock
 
 
 def start_dev_server(
@@ -157,7 +160,7 @@ def _start_prod_server(
     timeout: int,
     workers: int,
     enable_swagger: bool,
-    prometheus_lock: Optional[multiprocessing.synchronize.Lock] = None,
+    prometheus_lock: Optional["Lock"] = None,
 ):
 
     logger.info("Starting BentoML API server in production mode..")
@@ -184,7 +187,7 @@ def _start_prod_proxy(
     outbound_workers: int,
     mb_max_batch_size: int,
     mb_max_latency: int,
-    prometheus_lock: Optional[multiprocessing.synchronize.Lock] = None,
+    prometheus_lock: Optional["Lock"] = None,
 ):
 
     logger.info("Starting BentoML proxy in production mode..")

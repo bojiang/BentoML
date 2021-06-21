@@ -34,6 +34,8 @@ except ImportError:
 if TYPE_CHECKING:  # make type checkers happy
     from gunicorn.app.base import Application
 
+    Lock = multiprocessing.synchronize.Lock
+
 
 class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
     @inject
@@ -55,7 +57,7 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
         mb_max_latency: int = Provide[
             BentoMLContainer.config.bento_server.microbatch.max_latency
         ],
-        prometheus_lock: Optional[multiprocessing.synchronize.Lock] = None,
+        prometheus_lock: Optional["Lock"] = None,
         loglevel: str = Provide[BentoMLContainer.config.bento_server.logging.level],
     ):
         self.bento_service_bundle_path = bundle_path

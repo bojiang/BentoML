@@ -64,7 +64,7 @@ invalid_key1:
 
 
 def test_api_server_workers():
-    container = BentoMLContainer()
+    container = BentoMLContainer
 
     config_auto_workers = tempfile.NamedTemporaryFile(delete=False)
     config_auto_workers.write(
@@ -152,7 +152,7 @@ def mock_bentoml_home():
 
 
 def test_bentoml_home():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     assert container.bentoml_home.get() == mock_bentoml_home()
 
     os.environ["BENTOML_HOME"] = "/tmp/bentoml"
@@ -162,7 +162,7 @@ def test_bentoml_home():
 
 
 def test_prometheus_multiproc_dir():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration().as_dict()
     container.config.set(config)
 
@@ -172,7 +172,7 @@ def test_prometheus_multiproc_dir():
 
 
 def test_default_bento_bundle_deployment_version():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration().as_dict()
     container.config.set(config)
 
@@ -189,7 +189,7 @@ bento_bundle:
     )
     override_config.close()
 
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration(override_config_file=override_config.name).as_dict()
     container.config.set(config)
 
@@ -198,7 +198,7 @@ bento_bundle:
 
 
 def test_yatai_database_url():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration().as_dict()
     container.config.set(config)
 
@@ -225,7 +225,7 @@ yatai:
 
 
 def test_yatai_tls_root_ca_cert():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration().as_dict()
     container.config.set(config)
 
@@ -270,7 +270,7 @@ yatai:
 
 
 def test_yatai_logging_path():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration().as_dict()
     container.config.set(config)
 
@@ -297,7 +297,7 @@ yatai:
 
 
 def test_logging_file_directory():
-    container = BentoMLContainer()
+    container = BentoMLContainer
     config = BentoMLConfiguration().as_dict()
     container.config.set(config)
 

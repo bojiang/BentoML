@@ -16,8 +16,6 @@ import logging
 import multiprocessing
 from typing import Optional, TYPE_CHECKING
 
-from simple_di import Provide
-
 from bentoml.configuration.containers import BentoMLContainer
 from bentoml.utils import reserve_free_port
 
@@ -40,7 +38,7 @@ def start_dev_server(
 
         from bentoml.utils.flask_ngrok import start_ngrok
 
-        thread = Timer(1, start_ngrok, args=(port,))
+        thread = Timer(1, start_ngrok, args=(port,), daemon)
         thread.setDaemon(True)
         thread.start()
 
@@ -69,6 +67,7 @@ def start_dev_server(
         )
     finally:
         model_server_proc.terminate()
+
 
 
 def _start_dev_server(
@@ -133,16 +132,6 @@ def start_prod_server(
         BentoMLContainer.config.bento_server.workers.set(workers)
     if enable_swagger is not None:
         BentoMLContainer.config.bento_server.swagger.enabled.set(enable_swagger)
-
-    BentoMLContainer.prometheus_lock.get()  # generate lock before fork
-    BentoMLContainer.forward_port.get()  # generate port before fork
-
-    def _start_model_server():
-        BentoMLContainer.model_server.get().run()
-
-    model_server_job = multiprocessing.Process(target=_start_model_server, daemon=True,)
-    model_server_job.start()
-
     if microbatch_workers is not None:
         BentoMLContainer.config.bento_server.microbatch.workers.set(microbatch_workers)
     if mb_max_batch_size is not None:
@@ -151,6 +140,15 @@ def start_prod_server(
         )
     if mb_max_latency is not None:
         BentoMLContainer.config.bento_server.microbatch.max_latency.set(mb_max_latency)
+
+    BentoMLContainer.prometheus_lock.get()  # generate lock before fork
+    BentoMLContainer.forward_port.get()  # generate port before fork
+
+    def _start_model_server():
+        BentoMLContainer.model_server.get().run()
+
+    model_server_job = multiprocessing.Process(target=_start_model_server, daemon=True)
+    model_server_job.start()
 
     try:
         BentoMLContainer.proxy_server.get().run()

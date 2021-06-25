@@ -17,6 +17,7 @@ import multiprocessing
 from typing import Optional, TYPE_CHECKING
 
 from flask import Response
+from gunicorn.app.base import Application
 from simple_di import Provide, inject
 
 from bentoml.configuration.containers import BentoMLContainer
@@ -26,15 +27,9 @@ from bentoml.server.instruments import setup_prometheus_multiproc_dir
 
 logger = logging.getLogger(__name__)
 
-try:
-    from gunicorn.app.base import Application
-except ImportError:
-    Application = object
-
 
 if TYPE_CHECKING:  # make type checkers happy
     Lock = multiprocessing.synchronize.Lock
-    from gunicorn.app.base import Application
 
 
 class GunicornBentoAPIServer(BentoAPIServer):
@@ -74,12 +69,13 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
     @inject
     def __init__(
         self,
-        bundle_path,
-        bind: str = None,
-        port: int = Provide[BentoMLContainer.config.bento_server.port],
+        bundle_path: str = Provide[BentoMLContainer.bundle_path],
+        bind: str = Provide[BentoMLContainer.forward_bind],
+        host: str = Provide[BentoMLContainer.forward_host],
+        port: int = Provide[BentoMLContainer.forward_port],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
         workers: int = Provide[BentoMLContainer.api_server_workers],
-        prometheus_lock: Optional["Lock"] = None,
+        prometheus_lock: Optional["Lock"] = Provide[BentoMLContainer.prometheus_lock],
         enable_swagger: bool = Provide[
             BentoMLContainer.config.bento_server.swagger.enabled
         ],
@@ -91,7 +87,7 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
         self.bento_service_bundle_path = bundle_path
 
         if bind is None:
-            self.bind = f"0.0.0.0:{port}"
+            self.bind = f"{host}:{port}"
         else:
             self.bind = bind
 
@@ -106,7 +102,7 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
         self.prometheus_lock = prometheus_lock
         self.enable_swagger = enable_swagger
 
-        super(GunicornBentoServer, self).__init__()
+        super().__init__()
 
     def load_config(self):
         self.load_config_from_file("python:bentoml.server.gunicorn_config")
@@ -129,5 +125,6 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
         return api_server.app
 
     def run(self):
+        logger.info("Starting BentoML API server in production mode..")
         setup_prometheus_multiproc_dir(self.prometheus_lock)
-        super(GunicornBentoServer, self).run()
+        super().run()

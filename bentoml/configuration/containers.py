@@ -18,11 +18,12 @@ import os
 
 from deepmerge import always_merger
 from schema import And, Optional, Or, Schema, SchemaError, Use
-from simple_di import Container, Provide, providers
+from simple_di import Container, Provide, Provider, providers
 
 from bentoml import __version__
 from bentoml.configuration import expand_env_var, get_bentoml_deploy_version
 from bentoml.exceptions import BentoMLConfigException
+from bentoml.utils import get_free_port
 from bentoml.utils.ruamel_yaml import YAML
 
 
@@ -271,6 +272,33 @@ class BentoMLContainer(Container):
             os.environ.get("BENTOML_HOME", os.path.join("~", "bentoml"))
         )
     )
+
+    bundle_path: Provider[str] = providers.Static("")
+
+    service_host: Provider[str] = providers.Static("0.0.0.0")
+    service_port: Provider[int] = config.bento_server.port
+
+    forward_host: Provider[str] = providers.Static("localhost")
+    forward_port: Provider[int] = providers.SingletonFactory(get_free_port)
+    forward_bind: Provider[str] = providers.Factory(
+        "{host}:{port}".format, host=forward_host, port=forward_port
+    )
+
+    prometheus_lock = providers.SingletonFactory(multiprocessing.Lock)
+
+    @providers.Factory
+    @staticmethod
+    def model_server():
+        from bentoml.server.gunicorn_server import GunicornBentoServer
+
+        return GunicornBentoServer()
+
+    @providers.Factory
+    @staticmethod
+    def proxy_server():
+        from bentoml.server.marshal_server import GunicornMarshalServer
+
+        return GunicornMarshalServer()
 
     prometheus_multiproc_dir = providers.Factory(
         os.path.join, bentoml_home, "prometheus_multiproc_dir",

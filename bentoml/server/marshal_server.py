@@ -16,6 +16,7 @@ import logging
 import multiprocessing
 from typing import Optional, TYPE_CHECKING
 
+from gunicorn.app.base import Application
 from simple_di import Provide, inject
 
 from bentoml.configuration.containers import BentoMLContainer
@@ -25,46 +26,38 @@ from bentoml.server.instruments import setup_prometheus_multiproc_dir
 marshal_logger = logging.getLogger("bentoml.marshal")
 
 
-try:
-    from gunicorn.app.base import Application
-except ImportError:
-    Application = object
-
-
 if TYPE_CHECKING:  # make type checkers happy
-    from gunicorn.app.base import Application
 
     Lock = multiprocessing.synchronize.Lock
 
 
 class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
-    @inject
+    @inject(squeeze_none=True)
     def __init__(
         self,
-        bundle_path,
-        outbound_host,
-        outbound_port,
+        bundle_path: str = Provide[BentoMLContainer.bundle_path],
+        outbound_bind: str = Provide[BentoMLContainer.forward_bind],
         workers: int = Provide[BentoMLContainer.config.bento_server.microbatch.workers],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
-        outbound_workers: int = Provide[BentoMLContainer.config.api_server_workers],
+        outbound_workers: int = Provide[BentoMLContainer.api_server_workers],
         max_request_size: int = Provide[
             BentoMLContainer.config.bento_server.max_request_size
         ],
-        port: int = Provide[BentoMLContainer.config.bento_server.port],
+        host: str = Provide[BentoMLContainer.service_host],
+        port: int = Provide[BentoMLContainer.service_port],
         mb_max_batch_size: int = Provide[
             BentoMLContainer.config.bento_server.microbatch.max_batch_size
         ],
         mb_max_latency: int = Provide[
             BentoMLContainer.config.bento_server.microbatch.max_latency
         ],
-        prometheus_lock: Optional["Lock"] = None,
+        prometheus_lock: Optional["Lock"] = Provide[BentoMLContainer.prometheus_lock],
         loglevel: str = Provide[BentoMLContainer.config.bento_server.logging.level],
     ):
         self.bento_service_bundle_path = bundle_path
-
         self.port = port
         self.options = {
-            "bind": "%s:%s" % ("0.0.0.0", self.port),
+            "bind": "%s:%s" % (host, self.port),
             "timeout": timeout,
             "limit_request_line": max_request_size,
             "loglevel": loglevel.upper(),
@@ -73,18 +66,14 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
         if workers:
             self.options['workers'] = workers
         self.prometheus_lock = prometheus_lock
-
-        self.outbound_port = outbound_port
-        self.outbound_host = outbound_host
+        self.outbound_bind = outbound_bind
         self.outbound_workers = outbound_workers
         self.mb_max_batch_size = mb_max_batch_size
         self.mb_max_latency = mb_max_latency
-
         super().__init__()
 
     def load_config(self):
         self.load_config_from_file("python:bentoml.server.gunicorn_config")
-
         # override config with self.options
         gunicorn_config = dict(
             [
@@ -99,8 +88,7 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
     def load(self):
         server = MarshalService(
             self.bento_service_bundle_path,
-            self.outbound_host,
-            self.outbound_port,
+            self.outbound_bind,
             outbound_workers=self.outbound_workers,
             mb_max_batch_size=self.mb_max_batch_size,
             mb_max_latency=self.mb_max_latency,

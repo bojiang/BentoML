@@ -147,8 +147,7 @@ class MarshalService:
     def __init__(
         self,
         bento_bundle_path,
-        outbound_host="localhost",
-        outbound_port=None,
+        outbound_bind: str = Provide[BentoMLContainer.forward_bind],
         outbound_workers: int = Provide[BentoMLContainer.api_server_workers],
         mb_max_batch_size: int = Provide[
             BentoMLContainer.config.bento_server.microbatch.max_batch_size
@@ -175,8 +174,7 @@ class MarshalService:
         self._conn: Optional["BaseConnector"] = None
         self._client: Optional["ClientSession"] = None
         self.outbound_unix_socket = outbound_unix_socket
-        self.outbound_host = outbound_host
-        self.outbound_port = outbound_port
+        self.outbound_bind = outbound_bind
         self.outbound_workers = outbound_workers
         self.mb_max_batch_size = mb_max_batch_size
         self.mb_max_latency = mb_max_latency
@@ -220,9 +218,6 @@ class MarshalService:
             await task()
         if getattr(self, '_client', None) is not None and not self._client.closed:
             await self._client.close()
-
-    def set_outbound_port(self, outbound_port):
-        self.outbound_port = outbound_port
 
     def fetch_sema(self):
         if self._outbound_sema is None:
@@ -337,12 +332,13 @@ class MarshalService:
                 resp = await self.relay_handler(request)
         return resp
 
-    async def relay_handler(self, request):
+    async def relay_handler(self, request: "Request"):
         from aiohttp.client_exceptions import ClientConnectionError
         from aiohttp.web import Response
 
         data = await request.read()
-        url = request.url.with_host(self.outbound_host).with_port(self.outbound_port)
+        outbound_host, outbound_port = self.outbound_bind.split(":")
+        url = request.url.with_host(outbound_host).with_port(int(outbound_port))
 
         with BentoMLContainer.tracer.get().async_span(
             service_name=self.__class__.__name__,
@@ -374,7 +370,7 @@ class MarshalService:
         from aiohttp.web import Response
 
         headers = {MARSHAL_REQUEST_HEADER: "true"}
-        api_url = f"http://{self.outbound_host}:{self.outbound_port}/{api_route}"
+        api_url = f"http://{self.outbound_bind}/{api_route}"
 
         with BentoMLContainer.tracer.get().async_span(
             service_name=self.__class__.__name__,

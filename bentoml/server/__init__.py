@@ -38,7 +38,7 @@ def start_dev_server(
 
         from bentoml.utils.flask_ngrok import start_ngrok
 
-        thread = Timer(1, start_ngrok, args=(port,), daemon)
+        thread = Timer(1, start_ngrok, args=(port,))
         thread.setDaemon(True)
         thread.start()
 
@@ -67,7 +67,6 @@ def start_dev_server(
         )
     finally:
         model_server_proc.terminate()
-
 
 
 def _start_dev_server(

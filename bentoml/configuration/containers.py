@@ -280,9 +280,6 @@ class BentoMLContainer(Container):
 
     forward_host: Provider[str] = providers.Static("localhost")
     forward_port: Provider[int] = providers.SingletonFactory(get_free_port)
-    forward_bind: Provider[str] = providers.Factory(
-        "{host}:{port}".format, host=forward_host, port=forward_port
-    )
 
     prometheus_lock = providers.SingletonFactory(multiprocessing.Lock)
 

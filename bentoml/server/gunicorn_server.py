@@ -70,7 +70,6 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
     def __init__(
         self,
         bundle_path: str = Provide[BentoMLContainer.bundle_path],
-        bind: str = Provide[BentoMLContainer.forward_bind],
         host: str = Provide[BentoMLContainer.forward_host],
         port: int = Provide[BentoMLContainer.forward_port],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
@@ -86,13 +85,10 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
     ):
         self.bento_service_bundle_path = bundle_path
 
-        if bind is None:
-            self.bind = f"{host}:{port}"
-        else:
-            self.bind = bind
+        bind = f"{host}:{port}"
 
         self.options = {
-            "bind": self.bind,
+            "bind": bind,
             "timeout": timeout,  # TODO
             "limit_request_line": max_request_size,
             "loglevel": loglevel.upper(),

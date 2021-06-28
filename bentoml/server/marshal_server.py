@@ -36,7 +36,8 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
     def __init__(
         self,
         bundle_path: str = Provide[BentoMLContainer.bundle_path],
-        outbound_bind: str = Provide[BentoMLContainer.forward_bind],
+        outbound_host: str = Provide[BentoMLContainer.forward_host],
+        outbound_port: int = Provide[BentoMLContainer.forward_port],
         workers: int = Provide[BentoMLContainer.config.bento_server.microbatch.workers],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
         outbound_workers: int = Provide[BentoMLContainer.api_server_workers],
@@ -57,7 +58,7 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
         self.bento_service_bundle_path = bundle_path
         self.port = port
         self.options = {
-            "bind": "%s:%s" % (host, self.port),
+            "bind": "%s:%s" % (host, port),
             "timeout": timeout,
             "limit_request_line": max_request_size,
             "loglevel": loglevel.upper(),
@@ -66,7 +67,8 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
         if workers:
             self.options['workers'] = workers
         self.prometheus_lock = prometheus_lock
-        self.outbound_bind = outbound_bind
+        self.outbound_host = outbound_host
+        self.outbound_port = outbound_port
         self.outbound_workers = outbound_workers
         self.mb_max_batch_size = mb_max_batch_size
         self.mb_max_latency = mb_max_latency
@@ -88,7 +90,8 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
     def load(self):
         server = MarshalService(
             self.bento_service_bundle_path,
-            self.outbound_bind,
+            self.outbound_host,
+            self.outbound_port,
             outbound_workers=self.outbound_workers,
             mb_max_batch_size=self.mb_max_batch_size,
             mb_max_latency=self.mb_max_latency,

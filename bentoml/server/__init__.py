@@ -16,6 +16,8 @@ import logging
 import multiprocessing
 from typing import Optional, TYPE_CHECKING
 
+from simple_di import skip
+
 from bentoml.configuration.containers import BentoMLContainer
 from bentoml.utils import reserve_free_port
 
@@ -59,9 +61,9 @@ def start_dev_server(
 
     try:
         _start_dev_proxy(
+            saved_bundle_path=bundle_path,
             port=port,
             api_server_port=api_server_port,
-            saved_bundle_path=bundle_path,
             mb_max_batch_size=mb_max_batch_size,
             mb_max_latency=mb_max_latency,
         )
@@ -83,8 +85,8 @@ def _start_dev_server(
 
 
 def _start_dev_proxy(
-    port: int,
     saved_bundle_path: str,
+    port: int,
     api_server_port: int,
     mb_max_batch_size: int,
     mb_max_latency: int,
@@ -95,7 +97,8 @@ def _start_dev_proxy(
 
     marshal_server = MarshalService(
         saved_bundle_path,
-        outbound_bind=f"localhost:{api_server_port}",
+        outbound_host="localhost",
+        outbound_port=api_server_port,
         mb_max_batch_size=mb_max_batch_size,
         mb_max_latency=mb_max_latency,
     )
@@ -122,23 +125,15 @@ def start_prod_server(
 
     BentoMLContainer.bundle_path.set(saved_bundle_path)
 
-    if port is not None:
-        BentoMLContainer.config.bento_server.port.set(port)
-    if timeout is not None:
-        BentoMLContainer.config.bento_server.timeout.set(timeout)
-        BentoMLContainer.config.bento_server.microbatch.timeout.set(timeout)
-    if workers is not None:
-        BentoMLContainer.config.bento_server.workers.set(workers)
-    if enable_swagger is not None:
-        BentoMLContainer.config.bento_server.swagger.enabled.set(enable_swagger)
-    if microbatch_workers is not None:
-        BentoMLContainer.config.bento_server.microbatch.workers.set(microbatch_workers)
-    if mb_max_batch_size is not None:
-        BentoMLContainer.config.bento_server.microbatch.max_batch_size.set(
-            mb_max_batch_size
-        )
-    if mb_max_latency is not None:
-        BentoMLContainer.config.bento_server.microbatch.max_latency.set(mb_max_latency)
+    bento_server = BentoMLContainer.config.bento_server
+    bento_server.port.set(port or skip)
+    bento_server.timeout.set(timeout or skip)
+    bento_server.microbatch.timeout.set(timeout or skip)
+    bento_server.workers.set(workers or skip)
+    bento_server.swagger.enabled.set(enable_swagger or skip)
+    bento_server.microbatch.workers.set(microbatch_workers or skip)
+    bento_server.microbatch.max_batch_size.set(mb_max_batch_size or skip)
+    bento_server.microbatch.max_latency.set(mb_max_latency or skip)
 
     BentoMLContainer.prometheus_lock.get()  # generate lock before fork
     BentoMLContainer.forward_port.get()  # generate port before fork

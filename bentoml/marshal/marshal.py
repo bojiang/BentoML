@@ -146,8 +146,9 @@ class MarshalService:
     @inject
     def __init__(
         self,
-        bento_bundle_path,
-        outbound_bind: str = Provide[BentoMLContainer.forward_bind],
+        bento_bundle_path: str = Provide[BentoMLContainer.bundle_path],
+        outbound_host: str = Provide[BentoMLContainer.forward_host],
+        outbound_port: int = Provide[BentoMLContainer.forward_port],
         outbound_workers: int = Provide[BentoMLContainer.api_server_workers],
         mb_max_batch_size: int = Provide[
             BentoMLContainer.config.bento_server.microbatch.max_batch_size
@@ -174,7 +175,8 @@ class MarshalService:
         self._conn: Optional["BaseConnector"] = None
         self._client: Optional["ClientSession"] = None
         self.outbound_unix_socket = outbound_unix_socket
-        self.outbound_bind = outbound_bind
+        self.outbound_host = outbound_host
+        self.outbound_port = outbound_port
         self.outbound_workers = outbound_workers
         self.mb_max_batch_size = mb_max_batch_size
         self.mb_max_latency = mb_max_latency
@@ -337,8 +339,7 @@ class MarshalService:
         from aiohttp.web import Response
 
         data = await request.read()
-        outbound_host, outbound_port = self.outbound_bind.split(":")
-        url = request.url.with_host(outbound_host).with_port(int(outbound_port))
+        url = request.url.with_host(self.outbound_host).with_port(self.outbound_port)
 
         with BentoMLContainer.tracer.get().async_span(
             service_name=self.__class__.__name__,
@@ -370,7 +371,7 @@ class MarshalService:
         from aiohttp.web import Response
 
         headers = {MARSHAL_REQUEST_HEADER: "true"}
-        api_url = f"http://{self.outbound_bind}/{api_route}"
+        api_url = f"http://{self.outbound_host}:{self.outbound_port}/{api_route}"
 
         with BentoMLContainer.tracer.get().async_span(
             service_name=self.__class__.__name__,

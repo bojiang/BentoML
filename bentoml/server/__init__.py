@@ -138,13 +138,12 @@ def start_prod_server(
     BentoMLContainer.prometheus_lock.get()  # generate lock before fork
     BentoMLContainer.forward_port.get()  # generate port before fork
 
-    def _start_model_server():
-        BentoMLContainer.model_server.get().run()
-
-    model_server_job = multiprocessing.Process(target=_start_model_server, daemon=True)
+    model_server_job = multiprocessing.Process(
+        target=BentoMLContainer.model_server_entrypoint.get, daemon=True
+    )
     model_server_job.start()
 
     try:
-        BentoMLContainer.proxy_server.get().run()
+        BentoMLContainer.proxy_server_entrypoint.get()
     finally:
         model_server_job.terminate()

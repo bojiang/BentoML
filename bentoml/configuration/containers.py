@@ -15,6 +15,7 @@
 import logging
 import multiprocessing
 import os
+from typing import NoReturn
 
 from deepmerge import always_merger
 from schema import And, Optional, Or, Schema, SchemaError, Use
@@ -292,10 +293,19 @@ class BentoMLContainer(Container):
 
     @providers.Factory
     @staticmethod
-    def proxy_server():
+    def model_server_entrypoint() -> NoReturn:
+        from bentoml.server.gunicorn_server import GunicornBentoServer
+
+        GunicornBentoServer().run()
+        raise RuntimeError('not reachable')
+
+    @providers.Factory
+    @staticmethod
+    def proxy_server_entrypoint() -> NoReturn:
         from bentoml.server.marshal_server import GunicornMarshalServer
 
-        return GunicornMarshalServer()
+        GunicornMarshalServer().run()
+        raise RuntimeError('not reachable')
 
     prometheus_multiproc_dir = providers.Factory(
         os.path.join, bentoml_home, "prometheus_multiproc_dir",

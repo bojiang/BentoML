@@ -13,14 +13,19 @@
 # limitations under the License.
 
 import os
+from typing import TYPE_CHECKING
 
-import azure.functions as func
 from bentoml.server.model_app import ModelApp
 
-bento_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if TYPE_CHECKING:
+    import azure.functions as func  # pylint: disable=import-error
 
+
+bento_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 bento_server = ModelApp(bento_path)
 
 
-def main(req: func.HttpRequest, context: func.Context) -> func.HttpResponse:
+def main(req: "func.HttpRequest", context: "func.Context") -> "func.HttpResponse":
+    import azure.functions as func  # pylint: disable=import-error
+
     return func.WsgiMiddleware(bento_server.app.wsgi_app).handle(req, context)

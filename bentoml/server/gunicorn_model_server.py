@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # make type checkers happy
     Lock = multiprocessing.synchronize.Lock
+    from bentoml.server.model_app import ModelApp
 
 
 class GunicornModelServer(Application):  # pylint: disable=abstract-method
@@ -49,6 +50,8 @@ class GunicornModelServer(Application):  # pylint: disable=abstract-method
     @inject
     def __init__(
         self,
+        *,
+        app: "ModelApp" = Provide[BentoMLContainer.model_app],
         host: str = Provide[BentoMLContainer.forward_host],
         port: int = Provide[BentoMLContainer.forward_port],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
@@ -70,6 +73,7 @@ class GunicornModelServer(Application):  # pylint: disable=abstract-method
         if workers:
             self.options['workers'] = workers
         self.prometheus_lock = prometheus_lock
+        self.app = app
 
         super().__init__()
 
@@ -82,9 +86,8 @@ class GunicornModelServer(Application):  # pylint: disable=abstract-method
             if k.lower() in self.cfg.settings and v is not None:
                 self.cfg.set(k.lower(), v)
 
-    @inject
-    def load(self, *, app=Provide[BentoMLContainer.model_app]):
-        return app.app
+    def load(self):
+        return self.app.make_flask_app()
 
     def run(self):
         logger.info("Starting BentoML API server in production mode..")

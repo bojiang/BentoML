@@ -27,12 +27,15 @@ marshal_logger = logging.getLogger("bentoml.marshal")
 
 if TYPE_CHECKING:  # make type checkers happy
     Lock = multiprocessing.synchronize.Lock
+    from bentoml.marshal.marshal import MarshalApp
 
 
 class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
     @inject(squeeze_none=True)
     def __init__(
         self,
+        *,
+        app: "MarshalApp" = Provide[BentoMLContainer.proxy_app],
         workers: int = Provide[BentoMLContainer.config.bento_server.microbatch.workers],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
         max_request_size: int = Provide[
@@ -43,6 +46,7 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
         prometheus_lock: Optional["Lock"] = Provide[BentoMLContainer.prometheus_lock],
         loglevel: str = Provide[BentoMLContainer.config.bento_server.logging.level],
     ):
+        self.app = app
         self.port = port
         self.options = {
             "bind": "%s:%s" % (host, port),
@@ -65,9 +69,8 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
             if k.lower() in self.cfg.settings and v is not None:
                 self.cfg.set(k.lower(), v)
 
-    @inject
-    def load(self, *, app=Provide[BentoMLContainer.proxy_app]):
-        return app.make_aiohttp_app()
+    def load(self):
+        return self.app.make_aiohttp_app()
 
     def run(self):
         setup_prometheus_multiproc_dir(self.prometheus_lock)

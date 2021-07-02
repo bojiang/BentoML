@@ -32,8 +32,6 @@ from bentoml.service import BentoService, InferenceAPI
 from bentoml.types import HTTPRequest
 from bentoml.utils.open_api import get_open_api_spec_json
 
-CONTENT_TYPE_LATEST = str("text/plain; version=0.0.4; charset=utf-8")
-
 feedback_logger = logging.getLogger("bentoml.feedback")
 logger = logging.getLogger(__name__)
 
@@ -382,6 +380,9 @@ class ModelApp:
                 view_func=route_function,
                 methods=api.input_adapter.HTTP_METHODS,
             )
+
+    def make_flask_app(self):
+        return self.app
 
     def bento_service_api_func_wrapper(self, api: InferenceAPI):
         """

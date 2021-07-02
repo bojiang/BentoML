@@ -16,13 +16,10 @@ import logging
 import multiprocessing
 from typing import Optional, TYPE_CHECKING
 
-from flask import Response
 from gunicorn.app.base import Application
 from simple_di import Provide, inject
 
 from bentoml.configuration.containers import BentoMLContainer
-from bentoml.saved_bundle import load_from_dir
-from bentoml.server.api_server import BentoAPIServer
 from bentoml.server.instruments import setup_prometheus_multiproc_dir
 
 logger = logging.getLogger(__name__)
@@ -32,34 +29,17 @@ if TYPE_CHECKING:  # make type checkers happy
     Lock = multiprocessing.synchronize.Lock
 
 
-class GunicornBentoAPIServer(BentoAPIServer):
-    def metrics_view_func(self):
-        from prometheus_client import (
-            CONTENT_TYPE_LATEST,
-            CollectorRegistry,
-            generate_latest,
-            multiprocess,
-        )
-
-        registry = CollectorRegistry()
-        # NOTE: enable mb metrics to be parsed.
-        multiprocess.MultiProcessCollector(registry)
-        return Response(generate_latest(registry), mimetype=CONTENT_TYPE_LATEST,)
-
-
-class GunicornBentoServer(Application):  # pylint: disable=abstract-method
+class GunicornModelServer(Application):  # pylint: disable=abstract-method
     """
     A custom Gunicorn application.
 
     Usage::
 
-        >>> from bentoml.server.gunicorn_server import GunicornBentoServer
+        >>> from bentoml.server.gunicorn_model_server import GunicornModelServer
         >>>
-        >>> gunicorn_app = GunicornBentoServer(saved_bundle_path,\
-        >>>     bind="127.0.0.1:5000")
+        >>> gunicorn_app = GunicornModelServer(host="127.0.0.1", port=5000)
         >>> gunicorn_app.run()
 
-    :param bundle_path: path to the saved BentoService bundle
     :param bind: Specify a server socket to bind. Server sockets can be any of
         $(HOST), $(HOST):$(PORT), fd://$(FD), or unix:$(PATH).
     :param workers: number of worker processes
@@ -69,22 +49,16 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
     @inject
     def __init__(
         self,
-        bundle_path: str = Provide[BentoMLContainer.bundle_path],
         host: str = Provide[BentoMLContainer.forward_host],
         port: int = Provide[BentoMLContainer.forward_port],
         timeout: int = Provide[BentoMLContainer.config.bento_server.timeout],
         workers: int = Provide[BentoMLContainer.api_server_workers],
         prometheus_lock: Optional["Lock"] = Provide[BentoMLContainer.prometheus_lock],
-        enable_swagger: bool = Provide[
-            BentoMLContainer.config.bento_server.swagger.enabled
-        ],
         max_request_size: int = Provide[
             BentoMLContainer.config.bento_server.max_request_size
         ],
         loglevel: str = Provide[BentoMLContainer.config.bento_server.logging.level],
     ):
-        self.bento_service_bundle_path = bundle_path
-
         bind = f"{host}:{port}"
 
         self.options = {
@@ -96,29 +70,21 @@ class GunicornBentoServer(Application):  # pylint: disable=abstract-method
         if workers:
             self.options['workers'] = workers
         self.prometheus_lock = prometheus_lock
-        self.enable_swagger = enable_swagger
 
         super().__init__()
 
     def load_config(self):
         self.load_config_from_file("python:bentoml.server.gunicorn_config")
 
-        gunicorn_config = dict(
-            [
-                (key, value)
-                for key, value in self.options.items()
-                if key in self.cfg.settings and value is not None
-            ]
-        )
-        for key, value in gunicorn_config.items():
-            self.cfg.set(key.lower(), value)
+        # override config with self.options
+        assert self.cfg, "gunicorn config must be loaded"
+        for k, v in self.options.items():
+            if k.lower() in self.cfg.settings and v is not None:
+                self.cfg.set(k.lower(), v)
 
-    def load(self):
-        bento_service = load_from_dir(self.bento_service_bundle_path)
-        api_server = GunicornBentoAPIServer(
-            bento_service, enable_swagger=self.enable_swagger
-        )
-        return api_server.app
+    @inject
+    def load(self, *, app=Provide[BentoMLContainer.model_app]):
+        return app.app
 
     def run(self):
         logger.info("Starting BentoML API server in production mode..")

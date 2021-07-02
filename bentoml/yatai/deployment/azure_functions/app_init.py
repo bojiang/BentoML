@@ -13,15 +13,13 @@
 # limitations under the License.
 
 import os
-import azure.functions as func  # pylint: disable=import-error, no-name-in-module
 
-from bentoml.server.api_server import BentoAPIServer
-from bentoml.saved_bundle import load_from_dir
+import azure.functions as func
+from bentoml.server.model_app import ModelApp
 
 bento_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-svc = load_from_dir(bento_path)
 
-bento_server = BentoAPIServer(svc)
+bento_server = ModelApp(bento_path)
 
 
 def main(req: func.HttpRequest, context: func.Context) -> func.HttpResponse:

@@ -15,7 +15,7 @@
 import logging
 import multiprocessing
 import os
-from typing import NoReturn
+from typing import TYPE_CHECKING
 
 from deepmerge import always_merger
 from schema import And, Optional, Or, Schema, SchemaError, Use
@@ -27,6 +27,9 @@ from bentoml.exceptions import BentoMLConfigException
 from bentoml.utils import get_free_port
 from bentoml.utils.ruamel_yaml import YAML
 
+
+if TYPE_CHECKING:
+    from bentoml.marshal.marshal import MarshalApp
 
 LOGGER = logging.getLogger(__name__)
 
@@ -287,25 +290,30 @@ class BentoMLContainer(Container):
     @providers.Factory
     @staticmethod
     def model_server():
-        from bentoml.server.gunicorn_server import GunicornBentoServer
+        from bentoml.server.gunicorn_model_server import GunicornModelServer
 
-        return GunicornBentoServer()
-
-    @providers.Factory
-    @staticmethod
-    def model_server_entrypoint() -> NoReturn:
-        from bentoml.server.gunicorn_server import GunicornBentoServer
-
-        GunicornBentoServer().run()
-        raise RuntimeError('not reachable')
+        return GunicornModelServer()
 
     @providers.Factory
     @staticmethod
-    def proxy_server_entrypoint() -> NoReturn:
-        from bentoml.server.marshal_server import GunicornMarshalServer
+    def proxy_server():
+        from bentoml.server.gunicorn_marshal_server import GunicornMarshalServer
 
-        GunicornMarshalServer().run()
-        raise RuntimeError('not reachable')
+        return GunicornMarshalServer()
+
+    @providers.Factory
+    @staticmethod
+    def proxy_app() -> "MarshalApp":
+        from bentoml.marshal.marshal import MarshalApp
+
+        return MarshalApp()
+
+    @providers.Factory
+    @staticmethod
+    def model_app():
+        from bentoml.server.model_app import ModelApp
+
+        return ModelApp()
 
     prometheus_multiproc_dir = providers.Factory(
         os.path.join, bentoml_home, "prometheus_multiproc_dir",

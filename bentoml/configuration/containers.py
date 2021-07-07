@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from deepmerge import always_merger
 from schema import And, Optional, Or, Schema, SchemaError, Use
-from simple_di import Container, Provide, Provider, providers
+from simple_di import Provide, Provider, container, providers
 
 from bentoml import __version__
 from bentoml.configuration import expand_env_var, get_bentoml_deploy_version
@@ -203,7 +203,8 @@ class BentoMLConfiguration:
         return self.config
 
 
-class BentoMLContainer(Container):
+@container
+class BentoMLContainerClass:
 
     config = providers.Configuration()
 
@@ -375,3 +376,6 @@ class BentoMLContainer(Container):
         providers.Factory(os.path.join, logging_file_directory, "yatai_web_server.log"),
         config.yatai.logging.path,
     )
+
+
+BentoMLContainer = BentoMLContainerClass()

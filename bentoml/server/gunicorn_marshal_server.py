@@ -65,7 +65,7 @@ class GunicornMarshalServer(Application):  # pylint: disable=abstract-method
                 self.cfg.set(k.lower(), v)
 
     def load(self):
-        return self.app.make_aiohttp_app()
+        return self.app.get_app()
 
     def run(self):
         marshal_logger.info("Running micro batch service on :%d", self.port)

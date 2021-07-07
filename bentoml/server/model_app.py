@@ -148,7 +148,7 @@ class ModelApp:
     @inject
     def __init__(
         self,
-        bundle_path: Optional[str] = Provide[BentoMLContainer.bundle_path],
+        bundle_path: str = Provide[BentoMLContainer.bundle_path],
         app_name: str = None,
         enable_swagger: bool = Provide[
             BentoMLContainer.config.bento_server.swagger.enabled
@@ -159,17 +159,12 @@ class ModelApp:
         enable_feedback: bool = Provide[
             BentoMLContainer.config.bento_server.feedback.enabled
         ],
-        bento_service: Optional[BentoService] = None,
     ):
         from bentoml.saved_bundle.loader import load_from_dir
 
-        if bento_service is not None:
-            self.bento_service = bento_service
-        elif bundle_path is not None:
-            self.bento_service = load_from_dir(bundle_path)
-        else:
-            raise TypeError("neither bento_service nor bundle path provided")
+        assert bundle_path, repr(bundle_path)
 
+        self.bento_service = load_from_dir(bundle_path)
         app_name = self.bento_service.name if app_name is None else app_name
 
         self.app = Flask(app_name, static_folder=None)
@@ -381,7 +376,7 @@ class ModelApp:
                 methods=api.input_adapter.HTTP_METHODS,
             )
 
-    def make_flask_app(self):
+    def get_app(self):
         return self.app
 
     def bento_service_api_func_wrapper(self, api: InferenceAPI):

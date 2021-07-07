@@ -10,12 +10,12 @@ CUR_PATH = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_ROUTE = "$~!@%^&*()_-+=[]\\|;:,./predict"
 
 
-def test_api_function_route(bento_service, img_file):
+def test_api_function_route(bento_bundle_path, img_file):
     import imageio  # noqa # pylint: disable=unused-import
     import numpy as np  # noqa # pylint: disable=unused-import
 
     rest_server = ModelApp(
-        bento_service=bento_service,
+        bundle_path=bento_bundle_path,
         enable_swagger=True,
         enable_metrics=True,
         enable_feedback=True,
@@ -93,9 +93,9 @@ def test_api_function_route(bento_service, img_file):
     # assert 200 == response.status_code
 
 
-def test_api_function_route_with_disabled_swagger(bento_service):
+def test_api_function_route_with_disabled_swagger(bento_bundle_path):
     rest_server = ModelApp(
-        bento_service=bento_service,
+        bundle_path=bento_bundle_path,
         enable_swagger=False,
         enable_metrics=True,
         enable_feedback=True,

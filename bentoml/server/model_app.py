@@ -16,7 +16,7 @@ from functools import partial
 import logging
 import os
 import sys
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from flask import Flask, Response, jsonify, make_response, request, send_from_directory
 from google.protobuf.json_format import MessageToJson
@@ -28,9 +28,12 @@ from bentoml.configuration.containers import BentoMLContainer
 from bentoml.exceptions import BentoMLException
 from bentoml.marshal.utils import DataLoader, MARSHAL_REQUEST_HEADER
 from bentoml.server.instruments import InstrumentMiddleware
-from bentoml.service import BentoService, InferenceAPI
 from bentoml.types import HTTPRequest
 from bentoml.utils.open_api import get_open_api_spec_json
+
+
+if TYPE_CHECKING:
+    from bentoml.service import InferenceAPI
 
 feedback_logger = logging.getLogger("bentoml.feedback")
 logger = logging.getLogger(__name__)
@@ -379,7 +382,7 @@ class ModelApp:
     def get_app(self):
         return self.app
 
-    def bento_service_api_func_wrapper(self, api: InferenceAPI):
+    def bento_service_api_func_wrapper(self, api: "InferenceAPI"):
         """
         Create api function for flask route, it wraps around user defined API
         callback and adapter class, and adds request logging and instrument metrics

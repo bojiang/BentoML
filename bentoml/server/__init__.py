@@ -112,24 +112,24 @@ def start_prod_server(
 
 
 def _start_dev_server(container) -> NoReturn:
-    sync_container(BentoMLContainer, container)
+    sync_container(container, BentoMLContainer)
     BentoMLContainer.model_app.get().run()
     assert False, "not reachable"
 
 
 def _start_dev_proxy(container) -> NoReturn:
-    sync_container(BentoMLContainer, container)
+    sync_container(container, BentoMLContainer)
     BentoMLContainer.proxy_app.get().run()
     assert False, "not reachable"
 
 
 def _start_prod_server(container) -> NoReturn:
-    sync_container(BentoMLContainer, container)
+    sync_container(container, BentoMLContainer)
     BentoMLContainer.model_server.get().run()
     assert False, "not reachable"
 
 
 def _start_prod_proxy(container) -> NoReturn:
-    sync_container(BentoMLContainer, container)
+    sync_container(container, BentoMLContainer)
     BentoMLContainer.proxy_server.get().run()
     assert False, "not reachable"

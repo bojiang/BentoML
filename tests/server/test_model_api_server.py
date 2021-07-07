@@ -2,6 +2,9 @@ from io import BytesIO
 import json
 import os
 
+import simple_di
+
+from bentoml.configuration.containers import BentoMLContainer
 from bentoml.server.model_app import ModelApp
 
 
@@ -14,6 +17,7 @@ def test_api_function_route(bento_bundle_path, img_file):
     import imageio  # noqa # pylint: disable=unused-import
     import numpy as np  # noqa # pylint: disable=unused-import
 
+    BentoMLContainer.metrics_client._cache = simple_di.sentinel  # reset metrics_client
     rest_server = ModelApp(
         bundle_path=bento_bundle_path,
         enable_swagger=True,
@@ -94,6 +98,7 @@ def test_api_function_route(bento_bundle_path, img_file):
 
 
 def test_api_function_route_with_disabled_swagger(bento_bundle_path):
+    BentoMLContainer.metrics_client._cache = simple_di.sentinel  # reset metrics_client
     rest_server = ModelApp(
         bundle_path=bento_bundle_path,
         enable_swagger=False,

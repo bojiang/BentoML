@@ -100,9 +100,7 @@ def start_prod_server(
 
     import multiprocessing
 
-    ctx = multiprocessing.get_context("spawn")
-
-    model_server_job = ctx.Process(
+    model_server_job = multiprocessing.Process(
         target=_start_prod_server, args=(BentoMLContainer,), daemon=True
     )
     model_server_job.start()
@@ -120,7 +118,8 @@ def _start_dev_server(container) -> NoReturn:
 
 
 def _start_dev_proxy(container) -> NoReturn:
-    container.proxy_app.get().run()
+    sync_container(BentoMLContainer, container)
+    BentoMLContainer.proxy_app.get().run()
     assert False, "not reachable"
 
 
@@ -131,5 +130,6 @@ def _start_prod_server(container) -> NoReturn:
 
 
 def _start_prod_proxy(container) -> NoReturn:
-    container.proxy_server.get().run()
+    sync_container(BentoMLContainer, container)
+    BentoMLContainer.proxy_server.get().run()
     assert False, "not reachable"

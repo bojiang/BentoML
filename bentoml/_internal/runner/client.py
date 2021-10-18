@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Dict
+from typing import Dict, TYPE_CHECKING
 
 from simple_di import Provide, inject
 
@@ -19,7 +19,9 @@ class RunnerClient:
         import aiohttp
 
         if self._conn is None or self._conn.closed:
-            self._conn = aiohttp.UnixConnector(path=self._uds,)
+            self._conn = aiohttp.UnixConnector(
+                path=self._uds,
+            )
         return self._conn
 
     def _get_client(self):
@@ -41,8 +43,10 @@ class RunnerClient:
         return self._client
 
     async def async_run(self, *args, **kwargs):
+        from bentoml._internal.runner.transporter import data_to_payload
+
         URL = "http://127.0.0.1:8000/run"
-        payloads = {k: self._transporter.to_payload(v) for k, v in kwargs.items()}
+        payloads = {k: data_to_payload(v) for k, v in kwargs.items()}
         async with self._get_client() as client:
             async with client.post(URL, data=payloads) as resp:
                 text = await resp.text()

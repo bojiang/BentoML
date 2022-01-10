@@ -30,7 +30,7 @@ class LazyLoader(types.ModuleType):
         exc_msg: t.Optional[str] = None,
     ):
         self._local_name = local_name
-        self._parent_module_globals = parent_module_globals
+        # self._parent_module_globals = parent_module_globals
         self._warning = warning
         self._exc_msg = exc_msg
         self._module: t.Optional[types.ModuleType] = None
@@ -42,7 +42,7 @@ class LazyLoader(types.ModuleType):
         # Import the target module and insert it into the parent's namespace
         try:
             module = importlib.import_module(self.__name__)
-            self._parent_module_globals[self._local_name] = module
+            # self._parent_module_globals[self._local_name] = module
             # The additional add to sys.modules ensures library is actually loaded.
             sys.modules[self._local_name] = module
         except ModuleNotFoundError as e:

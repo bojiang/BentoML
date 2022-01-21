@@ -20,7 +20,6 @@ from ..runner.utils import Params
 from ..configuration.containers import BentoMLContainer
 
 if TYPE_CHECKING:
-    from bentoml._internal.frameworks import AnyNdarray
 
     from ..models import ModelStore
 
@@ -157,8 +156,8 @@ class GluonRunner(ModelRunner):
     # pylint: disable=arguments-differ
     def _run_batch(
         self,
-        *args: t.Union["AnyNdarray", mxnet.ndarray.NDArray],
-        **kwargs: t.Union["AnyNdarray", mxnet.ndarray.NDArray],
+        *args: t.Union["np.ndarray", mxnet.ndarray.NDArray],
+        **kwargs: t.Union["np.ndarray", mxnet.ndarray.NDArray],
     ) -> np.ndarray[t.Any, t.Any]:
         params = Params(*args, **kwargs)
         if isinstance(params.sample, np.ndarray):

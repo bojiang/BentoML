@@ -1,3 +1,4 @@
+# type: ignore[reportMissingTypeStubs]
 import typing as t
 import logging
 from typing import TYPE_CHECKING
@@ -7,11 +8,10 @@ from simple_di import inject
 from simple_di import Provide
 
 from bentoml import Tag
-from bentoml import Runner
 from bentoml.exceptions import BentoMLException
 from bentoml.exceptions import MissingDependencyException
 
-from ..types import PathType
+from . import ModelRunner
 from ..models import Model
 from ..models import PKL_EXT
 from ..models import SAVE_NAMESPACE
@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     import lightgbm
 
     from ..models import ModelStore
+
 
 try:
     from pycaret.internal.tabular import load_model
@@ -44,6 +45,7 @@ except ImportError:  # pragma: no cover
         """
     )
 
+
 _pycaret_version = get_pkg_version("pycaret")
 
 logger = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 def _get_model_info(
     tag: t.Union[str, Tag], model_store: "ModelStore"
-) -> t.Tuple["Model", PathType, PathType]:
+) -> t.Tuple["Model", str, str]:
     model = model_store.get(tag)
     if model.info.module != __name__:
         raise BentoMLException(  # pragma: no cover
@@ -154,23 +156,9 @@ def save(
     return _model.tag
 
 
-class PycaretRunner(Runner):
-    @inject
-    def __init__(
-        self,
-        tag: t.Union[str, Tag],
-        resource_quota: t.Optional[t.Dict[str, t.Any]],
-        batch_options: t.Optional[t.Dict[str, t.Any]],
-        model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
-    ):
-        self._model_store = model_store
-        self._model_tag = Tag.from_taglike(tag)
-        name = f"{self.__class__.__name__}_{self._model_tag.name}"
-        super().__init__(name, resource_quota, batch_options)
-
-    @property
-    def required_models(self) -> t.List[Tag]:
-        return [self._model_tag]
+@attr.define(kw_only=True)
+class PycaretRunner(ModelRunner):
+    _model: t.Any = attr.ib(init=False)
 
     @property
     def num_concurrency_per_replica(self) -> int:
@@ -180,11 +168,8 @@ class PycaretRunner(Runner):
     def num_replica(self) -> int:
         return 1
 
-    # pylint: disable=arguments-differ,attribute-defined-outside-init
-    def _setup(self) -> None:  # type: ignore[override]
-        _, model_file, pycaret_config = _get_model_info(
-            self._model_tag, self._model_store
-        )
+    def _setup(self) -> None:
+        _, model_file, pycaret_config = _get_model_info(self.tag, self.model_store)
         load_config(pycaret_config)
         self._model = load_model(model_file)
 
@@ -194,7 +179,7 @@ class PycaretRunner(Runner):
             "PyCaret is not designed to be ran"
             " in parallel. See https://github.com/pycaret/pycaret/issues/758"  # noqa # pylint: disable
         )
-        output = predict_model(self._model, input_data)  # type: pd.DataFrame
+        output = predict_model(self._model, input_data)
         return output
 
 
@@ -202,6 +187,7 @@ class PycaretRunner(Runner):
 def load_runner(
     tag: t.Union[str, Tag],
     *,
+    name: t.Optional[str],
     resource_quota: t.Optional[t.Dict[str, t.Any]] = None,
     batch_options: t.Optional[t.Dict[str, t.Any]] = None,
     model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
@@ -244,10 +230,14 @@ def load_runner(
 
         prediction = runner._run_batch(input_data=data_unseen)
         print(prediction)
-    """  # noqa
-    return PycaretRunner(
+    """
+    tag = Tag.from_taglike(tag)
+    if name is None:
+        name = tag.name
+    return PycaretRunner(  # pylint: disable=unexpected-keyword-arg
         tag=tag,
-        resource_quota=resource_quota,
-        batch_options=batch_options,
+        name=name,
+        resource_quota=resource_quota,  # type: ignore[reportGeneralTypeIssues]
+        batch_options=batch_options,  # type: ignore[reportGeneralTypesIssues]
         model_store=model_store,
     )

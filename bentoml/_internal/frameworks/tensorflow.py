@@ -1,3 +1,4 @@
+# type: ignore[reportMissingTypeStubs]
 import os
 import re
 import uuid
@@ -26,6 +27,7 @@ from ..utils.tensorflow import get_input_signatures
 from ..utils.tensorflow import get_restored_functions
 from ..utils.tensorflow import pretty_format_restored_model
 from ..configuration.containers import BentoMLContainer
+from ..configuration.containers import BentoRunnerContainer
 
 if TYPE_CHECKING:
     import numpy as np
@@ -105,7 +107,11 @@ BentoML detected that {name} is being used to pack a Keras API
 
 def _is_gpu_available() -> bool:
     try:
-        return len(tf.config.list_physical_devices("GPU")) > 0
+        get_visible_devices = t.cast(
+            t.Callable[[str], t.List["tf.config.LogicalDevice"]],
+            tf.config.get_visible_devices,
+        )
+        return bool(get_visible_devices("GPU"))
     except AttributeError:
         return tf.test.is_gpu_available()  # type: ignore
 
@@ -124,7 +130,7 @@ class _tf_function_wrapper:  # pragma: no cover
         self.kwarg_specs = {k: v for k, v in zip(arg_names or [], arg_specs or [])}
         self.kwarg_specs.update(kwarg_specs or {})
 
-    def __call__(self, *args: str, **kwargs: str) -> t.Any:
+    def __call__(self, *args: tf.Tensor, **kwargs: tf.Tensor) -> t.Any:
         if self.arg_specs is None and self.kwarg_specs is None:
             return self.origin_func(*args, **kwargs)
 
@@ -395,94 +401,148 @@ def save(
     return _model.tag
 
 
-def _validate_device(device_id: str) -> bool:
-    assert any(device_id in d.name for d in device_lib.list_local_devices())
-    return True
-
-
 @attr.define(kw_only=True)
 class TensorflowRunner(ModelRunner):
-    predict_fn_name: str
-    device_id: str
-    partial_kwargs: t.Optional[t.Dict[str, t.Any]]
+    predict_fn_name: str = attr.ib()
+    partial_kwargs: t.Optional[t.Dict[str, t.Any]] = attr.ib(default=None)
 
-    _session: "BaseSession"
+    _session: "BaseSession" = attr.ib(init=False)
+    _predict_fn: t.Callable[..., t.Any] = attr.ib(init=False)
 
     @property
     def num_concurrency_per_replica(self) -> int:
-        if _is_gpu_available() and self.resource_quota.on_gpu:
+        if self.resource_quota.on_gpu:
             return 1
         return int(round(self.resource_quota.cpu))
 
     @property
     def num_replica(self) -> int:
-        if _is_gpu_available() and self.resource_quota.on_gpu:
-            return len(tf.config.list_physical_devices("GPU"))
+        if self.resource_quota.on_gpu:
+            return len(self.resource_quota.gpus)  # create one replica on each gpu
         return 1
 
+    @property
+    @inject
+    def _device_v1(
+        self,
+        replica_id: t.Optional[int] = Provide[BentoRunnerContainer.replica_id],
+    ) -> str:
+        # convert device ids in resource_quota to tf1 format
+        if self.resource_quota.on_gpu:
+            if replica_id is None:
+                return "GPU"
+            gpu_id = self.resource_quota.gpus[replica_id]
+            if gpu_id.isdigit():
+                return f"GPU:{gpu_id}"
+            return gpu_id
+        else:
+            return "CPU"
+
+    @property
+    @inject
+    def _devices_v2(
+        self,
+        replica_id: t.Optional[int] = Provide[BentoRunnerContainer.replica_id],
+    ) -> t.List[tf.config.PhysicalDevice]:
+        if self.resource_quota.on_gpu:
+            list_physical_devices = t.cast(
+                t.Callable[[str], t.List[tf.config.PhysicalDevice]],
+                tf.config.list_physical_devices,
+            )
+            all_devices = list_physical_devices("GPU")
+            if replica_id is None:
+                return all_devices
+            gpu_id = self.resource_quota.gpus[replica_id]
+            if not gpu_id.isdigit():
+                # matchs `CPU:0 , `/physical_device/CPU``
+                devices = [d for d in all_devices if gpu_id in d.name]
+                if not devices:
+                    logger.warning(
+                        f"no physical devices matched `{gpu_id}`. "
+                        "A valid device id seems like "
+                        '"0", "CPU:0", "/physical_device:CPU:0"'
+                    )
+                return devices
+            gpu_id = int(gpu_id)
+            if gpu_id >= len(all_devices):
+                raise ValueError(f"no gpu_id: {gpu_id} found in {all_devices}")
+            return all_devices[gpu_id : gpu_id + 1]
+
+        list_physical_devices = t.cast(
+            t.Callable[[str], t.List[tf.config.PhysicalDevice]],
+            tf.config.list_physical_devices,
+        )
+        all_devices = list_physical_devices("CPU")
+        return all_devices
+
+    @property
+    def num_replica(self) -> int:
+        if self.resource_quota.on_gpu:
+            if self.resource_quota.gpus is None:
+                pass
+            return len(self.resource_quota.gpus)  # create one replica on each gpu
+        return 1
+
+    def _configure_framework(self):
+        # need to be called before other tensorflow APIs
+        if self.resource_quota.on_gpu:
+            assert _is_gpu_available()
+
+        if TF2:
+            tf.config.set_visible_devices(self._devices_v2, "GPU")
+
     def _setup(self) -> None:
-        assert any(self.device_id in d.name for d in device_lib.list_local_devices())
+        self._configure_framework()
         self._model = load(self.tag, model_store=self.model_store)
-        if TF2 and "GPU" in self.device_id:
-            tf.config.set_visible_devices(self.device_id, "GPU")
+
+        if TF2 and self.resource_quota.on_gpu:
             raw_predict_fn = self._model.signatures["serving_default"]
         else:
-            _config_proto = dict(
-                allow_soft_placement=True,
-                log_device_placement=False,
-                intra_op_parallelism_threads=self.num_concurrency_per_replica,
-                inter_op_parallelism_threads=self.num_concurrency_per_replica,
-            )
             self._session = tf.compat.v1.Session(
-                config=tf.compat.v1.ConfigProto(**_config_proto)
+                config=tf.compat.v1.ConfigProto(
+                    allow_soft_placement=True,
+                    log_device_placement=False,
+                    intra_op_parallelism_threads=self.num_concurrency_per_replica,
+                    inter_op_parallelism_threads=self.num_concurrency_per_replica,
+                )
             )
-
             raw_predict_fn = getattr(self._model, self.predict_fn_name)
-        self._predict_fn = functools.partial(raw_predict_fn, **self.partial_kwargs)
+
+        if self.partial_kwargs is not None:
+            self._predict_fn = functools.partial(raw_predict_fn, **self.partial_kwargs)
+        else:
+            self._predict_fn = raw_predict_fn
+
+    @staticmethod
+    def _to_tensor(
+        item: t.Union[
+            t.List[t.Union[int, float]],
+            "np.ndarray",
+            tf.Tensor,
+        ]
+    ) -> tf.Tensor:
+        if not isinstance(item, tf.Tensor):
+            return tf.convert_to_tensor(item, dtype=tf.float32)
+        else:
+            return item
 
     def _run_batch(
         self,
-        *args: t.Union[
-            t.List[t.Union[int, float]], "np.ndarray[t.Any, np.dtype[t.Any]]", tf.Tensor
-        ],
-        **kwargs: t.Union[
-            t.List[t.Union[int, float]], "np.ndarray[t.Any, np.dtype[t.Any]]", tf.Tensor
-        ],
-    ) -> "np.ndarray[t.Any, np.dtype[t.Any]]":
-        params = Params[
-            t.Union[
-                t.List[t.Union[int, float]],
-                "np.ndarray[t.Any, np.dtype[t.Any]]",
-                tf.Tensor,
-            ]
-        ](*args, **kwargs)
+        *args: t.Union[t.List[t.Union[int, float]], "np.ndarray", tf.Tensor],
+        **kwargs: t.Union[t.List[t.Union[int, float]], "np.ndarray", tf.Tensor],
+    ) -> "np.ndarray":
+        params = Params(*args, **kwargs)
 
-        with tf.device(self.device_id):
-
-            def _mapping(
-                item: t.Union[
-                    t.List[t.Union[int, float]],
-                    "np.ndarray[t.Any, np.dtype[t.Any]]",
-                    tf.Tensor,
-                ]
-            ) -> tf.Tensor:
-                if not isinstance(item, tf.Tensor):
-                    return tf.convert_to_tensor(item, dtype=tf.float32)
-                else:
-                    return item
-
-            params = params.map(_mapping)
-
-            if TF2:
-                tf.compat.v1.global_variables_initializer()
-                res = self._predict_fn(*params.args, **params.kwargs)
-            else:
+        if TF2:
+            params = params.map(self._to_tensor)
+            res = self._predict_fn(*params.args, **params.kwargs)
+            return res.numpy()
+        else:
+            with tf.device(self._device_v1):
+                params = params.map(self._to_tensor)
                 self._session.run(tf.compat.v1.global_variables_initializer())
                 res = self._session.run(self._predict_fn(*params.args, **params.kwargs))
-            return t.cast(
-                "np.ndarray[t.Any, np.dtype[t.Any]]",
-                res.numpy() if TF2 else res["prediction"],
-            )
+                return res["prediction"]
 
 
 @inject
@@ -490,8 +550,8 @@ def load_runner(
     tag: t.Union[str, Tag],
     *,
     predict_fn_name: str = "__call__",
-    device_id: str = "CPU:0",
     partial_kwargs: t.Optional[t.Dict[str, t.Any]] = None,
+    name: t.Optional[str] = None,
     resource_quota: t.Union[None, t.Dict[str, t.Any]] = None,
     batch_options: t.Union[None, t.Dict[str, t.Any]] = None,
     model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
@@ -507,8 +567,6 @@ def load_runner(
             inference function to be used.
         partial_kwargs (`t.Dict[str, t.Any]`, `optional`, default to `None`):
             Dictionary of partial kwargs that can be shared across different model.
-        device_id (`t.Union[str, int, t.List[t.Union[str, int]]]`, `optional`, default to `CPU:0`):
-            Optional devices to put the given model on. Refers to https://www.tensorflow.org/api_docs/python/tf/config
         resource_quota (`t.Dict[str, t.Any]`, default to `None`):
             Dictionary to configure resources allocation for runner.
         batch_options (`t.Dict[str, t.Any]`, default to `None`):
@@ -523,12 +581,12 @@ def load_runner(
     if name is None:
         name = tag.name
 
-    return TensorflowRunner(
+    return TensorflowRunner(  # pylint: disable=unexpected-keyword-arg
         tag=tag,
         predict_fn_name=predict_fn_name,
-        device_id=device_id,
         partial_kwargs=partial_kwargs,
-        resource_quota=resource_quota,
-        batch_options=batch_options,
+        name=name,
+        resource_quota=resource_quota,  # type: ignore[reportGeneralTypeIssues]
+        batch_options=batch_options,  # type: ignore[reportGeneralTypeIssues]
         model_store=model_store,
     )

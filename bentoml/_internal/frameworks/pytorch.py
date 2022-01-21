@@ -1,18 +1,19 @@
 import pickle
 import typing as t
+import logging
 import zipfile
 import functools
 from typing import TYPE_CHECKING
 from pathlib import Path
 
 import attr
-import cloudpickle
+import cloudpickle  # type: ignore[reportMissingTypeStubs]
 from simple_di import inject
 from simple_di import Provide
 
 from bentoml import Tag
-from bentoml import Runner
 
+from . import ModelRunner
 from ..models import Model
 from ..models import PT_EXT
 from ..models import SAVE_NAMESPACE
@@ -23,13 +24,15 @@ from ..runner.utils import TypeRef
 from ..runner.container import Payload
 from ..runner.container import DataContainer
 from ..runner.container import DataContainerRegistry
+from .._internal.container import BentoMLRunnerContainer
 from ..configuration.containers import BentoMLContainer
+from ..configuration.containers import BentoRunnerContainer
 
 if TYPE_CHECKING:
     from ..models import ModelStore
 
 try:
-    import numpy as np
+    import numpy as np  # type: ignore[reportMissingTypeStubs]
     import torch
     import torch.nn.parallel as parallel
 except ImportError:  # pragma: no cover
@@ -41,6 +44,8 @@ except ImportError:  # pragma: no cover
         """  # noqa
     )
 
+
+logger = logging.getLogger(__name__)
 _ModelType = t.Union["torch.nn.Module", "torch.jit.ScriptModule"]  # type: ignore[reportPrivateUsage]
 
 _torch_version = get_pkg_version("torch")
@@ -165,109 +170,102 @@ def save(
     return _model.tag
 
 
-class PyTorchRunner(Runner):
-    @inject
-    def __init__(
-        self,
-        tag: t.Union[str, Tag],
-        predict_fn_name: str,
-        device_id: str,
-        partial_kwargs: t.Optional[t.Dict[str, t.Any]],
-        resource_quota: t.Optional[t.Dict[str, t.Any]],
-        batch_options: t.Optional[t.Dict[str, t.Any]],
-        model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
-    ):
-        self._model_store = model_store
-        self._model_tag = Tag.from_taglike(tag)
-        name = f"{self.__class__.__name__}_{self._model_tag.name}"
-        super().__init__(name, resource_quota, batch_options)
-        self._predict_fn_name = predict_fn_name
-        if "cuda" in device_id:
-            try:
-                _, dev = device_id.split(":")
-                self.resource_quota.gpus = [dev]
-            except ValueError:
-                self.resource_quota.gpus = [
-                    str(i) for i in range(torch.cuda.device_count())
-                ]
-        self._device_id = device_id
-        self._partial_kwargs = partial_kwargs or dict()
+@attr.define(kw_only=True)
+class PyTorchRunner(ModelRunner):
+    predict_fn_name: str = attr.ib()
+    partial_kwargs: t.Optional[t.Dict[str, t.Any]] = attr.ib()
 
-    @property
-    def required_models(self) -> t.List[Tag]:
-        return [self._model_tag]
+    _model: t.Any = attr.ib(init=False)
+    _predict_fn: t.Callable[..., torch.Tensor] = attr.ib(init=False)
 
     @property
     def num_concurrency_per_replica(self) -> int:
-        if _is_gpu_available() and self.resource_quota.on_gpu:
+        if self.resource_quota.on_gpu:
             return 1
         return int(round(self.resource_quota.cpu))
 
     @property
     def num_replica(self) -> int:
-        if _is_gpu_available() and self.resource_quota.on_gpu:
-            return torch.cuda.device_count()
+        if self.resource_quota.on_gpu:
+            if self.resource_quota.gpus is None:
+                return 1
+            return len(self.resource_quota.gpus)
         return 1
 
-    def _configure(self) -> None:
+    def _configure_framework(self) -> None:
         torch.set_num_threads(self.num_concurrency_per_replica)
+        if self.resource_quota.on_gpu and not torch.cuda.is_available():
+            logger.warning(
+                "`resource_quota.on_gpu` is True but `torch.cuda.is_available()` is False"
+            )
         if self.resource_quota.on_gpu and _is_gpu_available():
-            torch.set_default_tensor_type("torch.cuda.FloatTensor")
+            torch.set_default_tensor_type(
+                "torch.cuda.FloatTensor"
+            )  # TODO: performance of float default
         else:
             torch.set_default_tensor_type("torch.FloatTensor")
 
-    # pylint: disable=arguments-differ,attribute-defined-outside-init
+    @property
+    def _device(self) -> str:
+        # convert device ids in resource_quota to torch format
+        if self.resource_quota.on_gpu:
+            replica_id = BentoRunnerContainer.replica_id.get()
+            if replica_id:
+                gpu_id = self.resource_quota.gpus[
+                    replica_id
+                ]  # ["0", "1", "2", "cuda:0"]
+            if gpu_id.isdigit():
+                return f"cuda:{gpu_id}"
+            return gpu_id
+        else:
+            return "cpu"
+
     @torch.no_grad()
-    def _setup(self) -> None:  # type: ignore[override]
-        self._configure()
-        if self.resource_quota.on_gpu and _is_gpu_available():
+    def _setup(self) -> None:
+        self._configure_framework()
+        if self.resource_quota.on_gpu:
             self._model = parallel.DataParallel(
                 load(
-                    self._model_tag,
-                    model_store=self._model_store,
-                    device_id=self._device_id,
+                    self.tag,
+                    model_store=self.model_store,
+                    device_id=self._device,
                 ),
             )
             torch.cuda.empty_cache()
         else:
             self._model = load(
-                self._model_tag,
-                model_store=self._model_store,
-                device_id=self._device_id,
+                self.tag,
+                model_store=self.model_store,
+                device_id=self._device,
             )
-        raw_predict_fn = getattr(self._model, self._predict_fn_name)
-        self._predict_fn: t.Callable[..., torch.Tensor] = functools.partial(
-            raw_predict_fn, **self._partial_kwargs
-        )
+        raw_predict_fn = getattr(self._model, self.predict_fn_name)
+
+        if self.partial_kwargs is not None:
+            self._predict_fn = functools.partial(raw_predict_fn, **self.partial_kwargs)
+        else:
+            self._predict_fn = raw_predict_fn
+
+    def _map_input(self, item: t.Union["np.ndarray", torch.Tensor]) -> torch.Tensor:
+        if isinstance(item, np.ndarray):
+            item = torch.from_numpy(item)
+        item = item.to(device=self._device)
+        return item
 
     @torch.no_grad()
     def _run_batch(
         self,
-        *args: t.Union["np.ndarray[t.Any, np.dtype[t.Any]]", torch.Tensor],
-        **kwargs: t.Union["np.ndarray[t.Any, np.dtype[t.Any]]", torch.Tensor],
+        *args: t.Union["np.ndarray", torch.Tensor],
+        **kwargs: t.Union["np.ndarray", torch.Tensor],
     ) -> torch.Tensor:
-
-        params = Params[t.Union["np.ndarray[t.Any, np.dtype[t.Any]]", torch.Tensor]](
-            *args, **kwargs
-        )
-
-        def _mapping(
-            item: t.Union["np.ndarray[t.Any, np.dtype[t.Any]]", torch.Tensor]
-        ) -> torch.Tensor:
-            if isinstance(item, np.ndarray):
-                item = torch.from_numpy(item)
-            if self.resource_quota.on_gpu:
-                item = item.cuda()
-            return item
-
-        params = params.map(_mapping)
-
+        params = Params(*args, **kwargs)
+        params = params.map(self._map_input)
         # inference mode is required for PyTorch version 1.9.*
         if _torch_version.startswith("1.9"):
             with torch.inference_mode():
                 res = self._predict_fn(*params.args, **kwargs)
         else:
             res = self._predict_fn(*params.args, **kwargs)
+        # TODO: do we need to move the tensor to cpu here?
         return res
 
 
@@ -276,8 +274,8 @@ def load_runner(
     tag: t.Union[str, Tag],
     *,
     predict_fn_name: str = "__call__",
-    device_id: str = "cpu:0",
     partial_kwargs: t.Optional[t.Dict[str, t.Any]] = None,
+    name: t.Optional[str] = None,
     resource_quota: t.Optional[t.Dict[str, t.Any]] = None,
     batch_options: t.Optional[t.Dict[str, t.Any]] = None,
     model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
@@ -292,8 +290,6 @@ def load_runner(
             Model tag to retrieve model from modelstore
         predict_fn_name (`str`, default to `__call__`):
             inference function to be used.
-        device_id (`t.Union[str, int, t.List[t.Union[str, int]]]`, `optional`, default to `cpu`):
-            Optional devices to put the given model on. Refers to https://pytorch.org/docs/stable/tensor_attributes.html#torch.torch.device
         partial_kwargs (`t.Optional[t.Dict[str, t.Any]]`, default to `None`):
             Common kwargs passed to model for this runner
         resource_quota (`t.Dict[str, t.Any]`, default to `None`):
@@ -310,14 +306,18 @@ def load_runner(
         import bentoml.pytorch
         runner = bentoml.pytorch.load_runner("ngrams:20201012_DE43A2")
         runner.run(pd.DataFrame("/path/to/csv"))
-    """  # noqa
-    return PyTorchRunner(
+    """
+
+    tag = Tag.from_taglike(tag)
+    if name is None:
+        name = tag.name
+    return PyTorchRunner(  # pylint: disable=unexpected-keyword-arg
         tag=tag,
         predict_fn_name=predict_fn_name,
-        device_id=device_id,
         partial_kwargs=partial_kwargs,
-        resource_quota=resource_quota,
-        batch_options=batch_options,
+        name=name,
+        resource_quota=resource_quota,  # type: ignore[reportGeneralTypeIssues]
+        batch_options=batch_options,  # type: ignore[reportGeneralTypeIssues]
         model_store=model_store,
     )
 

@@ -16,6 +16,7 @@ from bentoml._internal.marshal.dispatcher import CorkDispatcher
 
 from ..server.base_app import BaseAppFactory
 from ..configuration.containers import BentoMLContainer
+from ..configuration.containers import BentoRunnerContainer
 
 feedback_logger = logging.getLogger("bentoml.feedback")
 logger = logging.getLogger(__name__)
@@ -34,11 +35,11 @@ class RunnerAppFactory(BaseAppFactory):
     def __init__(
         self,
         runner: "Runner",
-        instance_id: t.Optional[int] = None,
+        replica_id: t.Optional[int] = Provide[BentoRunnerContainer.replica_id],
         tracer: "Tracer" = Provide[BentoMLContainer.tracer],
     ) -> None:
         self.runner = runner
-        self.instance_id = instance_id
+        self.replica_id = replica_id
         self.tracer = tracer
 
         from starlette.responses import Response
@@ -124,7 +125,7 @@ class RunnerAppFactory(BaseAppFactory):
                 payload.data,
                 headers={
                     PAYLOAD_META_HEADER: json.dumps(payload.meta),
-                    "Server": f"BentoML-Runner/{self.runner.name}/{self.instance_id}",
+                    "Server": f"BentoML-Runner/{self.runner.name}/{self.replica_id}",
                 },
             )
             for payload in payloads
@@ -143,7 +144,7 @@ class RunnerAppFactory(BaseAppFactory):
             payload.data,
             headers={
                 PAYLOAD_META_HEADER: json.dumps(payload.meta),
-                "Server": f"BentoML-Runner/{self.runner.name}/{self.instance_id}",
+                "Server": f"BentoML-Runner/{self.runner.name}/{self.replica_id}",
             },
         )
 
@@ -160,6 +161,6 @@ class RunnerAppFactory(BaseAppFactory):
             payload.data,
             headers={
                 PAYLOAD_META_HEADER: json.dumps(payload.meta),
-                "Server": f"BentoML-Runner/{self.runner.name}/{self.instance_id}",
+                "Server": f"BentoML-Runner/{self.runner.name}/{self.replica_id}",
             },
         )

@@ -24,7 +24,6 @@ from ..configuration.containers import BentoMLContainer
 if TYPE_CHECKING:
     from detectron2.checkpoint import DetectionCheckpointer
 
-    from . import AnyNdarray
     from ..models import ModelStore
 
 try:
@@ -230,7 +229,7 @@ class DetectronRunner(ModelRunner):
         self._predict_fn = getattr(self._model, self.predict_fn_name)
 
     @staticmethod
-    def _input_mapping(item: t.Union["AnyNdarray", torch.Tensor]) -> torch.Tensor:
+    def _input_mapping(item: t.Union["np.ndarray", torch.Tensor]) -> torch.Tensor:
         if isinstance(item, np.ndarray):
             return torch.from_numpy(item)
         return item
@@ -238,8 +237,8 @@ class DetectronRunner(ModelRunner):
     # pylint: disable=arguments-differ
     def _run_batch(  # type: ignore[reportIncompatibleMethodOverride]
         self,
-        *args: t.Union["AnyNdarray", torch.Tensor],
-    ) -> "AnyNdarray":
+        *args: t.Union["np.ndarray", torch.Tensor],
+    ) -> "np.ndarray":
         params = Params(*args)
 
         params = params.map(self._input_mapping)

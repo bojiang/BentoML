@@ -9,9 +9,9 @@ from simple_di import inject
 from simple_di import Provide
 
 from bentoml import Tag
-from bentoml import Runner
 from bentoml.exceptions import MissingDependencyException
 
+from . import ModelRunner
 from ..models import Model
 from ..models import SAVE_NAMESPACE
 from ..configuration.containers import BentoMLContainer
@@ -19,9 +19,16 @@ from ..configuration.containers import BentoMLContainer
 if TYPE_CHECKING:
     from ..models import ModelStore
 
+    class ExecutionSession(t.Protocol):
+        def __init__(self, path: str, func_name: str) -> None:
+            ...
+
+        def run(self, input_: np.ndarray) -> np.ndarray:
+            ...
+
+
 try:
     from PyRuntime import __spec__ as _spec  # pylint: disable=W0622
-    from PyRuntime import ExecutionSession
 except ImportError:  # pragma: no cover
     raise MissingDependencyException(
         """\
@@ -59,10 +66,15 @@ def load(
         an instance of `xgboost.core.Booster` from BentoML modelstore.
 
     Examples::
-    """  # noqa
+    """
+    from PyRuntime import ExecutionSession as Session
+
     model = model_store.get(tag)
     compiled_path = model.path_of(model.info.options["compiled_path"])
-    return ExecutionSession(compiled_path, "run_main_graph")
+    session = Session(  #  type: ignore[reportUnknownVariableType]
+        compiled_path, "run_main_graph"
+    )  # type: ExecutionSession
+    return session
 
 
 @inject
@@ -126,7 +138,7 @@ class ONNXMLirRunner(ModelRunner):
 
     # pylint: disable=arguments-differ,attribute-defined-outside-init
     def _setup(self) -> None:  # type: ignore[override]
-        self._session = load(self._model_tag, self._model_store)
+        self._session = load(self.tag, self.model_store)
 
     # pylint: disable=arguments-differ
     def _run_batch(self, input_data: np.ndarray) -> np.ndarray:  # type: ignore[override] # noqa: LN001
@@ -162,10 +174,13 @@ def load_runner(
 
     Examples::
     """  # noqa
-    return ONNXMLirRunner(
+    tag = Tag.from_taglike(tag)
+    if name is None:
+        name = tag.name
+    return ONNXMLirRunner(  # pylint: disable=unexpected-keyword-arg
         tag=tag,
         name=name,
-        resource_quota=resource_quota,
-        batch_options=batch_options,
+        resource_quota=resource_quota,  # type: ignore[reportGeneralTypeIssues]
+        batch_options=batch_options,  # type: ignore[reportGeneralTypeIssues]
         model_store=model_store,
     )

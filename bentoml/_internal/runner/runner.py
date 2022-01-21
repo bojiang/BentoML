@@ -1,59 +1,37 @@
-import os
 import re
 import abc
 import enum
 import typing as t
 from abc import ABC
 from abc import abstractmethod
-from typing import TYPE_CHECKING
 
 import attr
-import psutil
 
 from .utils import cpu_converter
 from .utils import gpu_converter
 from .utils import mem_converter
-from .utils import query_cgroup_cpu_count
 from ..types import Tag
+from ..configuration.containers import BentoRunnerContainer
 from ..configuration.containers import BentoServerContainer
 
-if TYPE_CHECKING:
-    import platform
-
-    if platform.system() == "Darwin":
-        from psutil._psosx import svmem
-    elif platform.system() == "Linux":
-        from psutil._pslinux import svmem
-    else:
-        from psutil._pswindows import svmem
-
-
-def _get_default_cpu() -> float:
-    # Default to the total CPU count available in current node or cgroup
-    if psutil.POSIX:
-        return query_cgroup_cpu_count()
-    else:
-        cpu_count = os.cpu_count()
-        if cpu_count is not None:
-            return float(cpu_count)
-        raise ValueError("CPU count is NoneType")
-
-
-def _get_default_mem() -> int:
-    # Default to the total memory available
-    from psutil import virtual_memory
-
-    mem: "svmem" = virtual_memory()
-    return mem.total
+# from simple_di.providers import SingletonFactory
 
 
 @attr.define
 class ResourceQuota:
-    cpu: float = attr.field(converter=cpu_converter, factory=_get_default_cpu)
-    mem: int = attr.field(converter=mem_converter, factory=_get_default_mem)
-    gpus: t.List[str] = attr.field(converter=gpu_converter, default=None)
-    # Example gpus value: "all", 2, "device=1,2"
-    # Default to "None", returns all available GPU devices in current environment
+    cpu: float = attr.field(
+        converter=cpu_converter,
+        factory=BentoRunnerContainer.default_cpu.get,
+    )
+    mem: int = attr.field(
+        converter=mem_converter,
+        factory=BentoRunnerContainer.default_mem.get,
+    )
+    gpus: t.List[str] = attr.field(
+        converter=gpu_converter,
+        factory=BentoRunnerContainer.default_gpus.get,
+    )  # examples: ["0", "1"]
+
     @property
     def on_gpu(self) -> bool:
         if self.gpus is not None:
@@ -88,8 +66,6 @@ VARNAME_RE = re.compile(r"\W|^(?=\d)")
 
 class _BaseRunner(abc.ABC):
     name: str
-    resource_quota: ResourceQuota
-    batch_options: BatchOptions
 
     def __init__(
         self,
@@ -100,10 +76,16 @@ class _BaseRunner(abc.ABC):
         if not name.isidentifier():
             name = VARNAME_RE.sub("_", name)
         self.name = name
-        self.resource_quota = ResourceQuota(
-            **(resource_quota if resource_quota else {})
+
+        self.resource_quota = (
+            ResourceQuota()
+            if resource_quota is None
+            else ResourceQuota(**resource_quota)
         )
-        self.batch_options = BatchOptions(**(batch_options if batch_options else {}))
+
+        self.batch_options = (
+            BatchOptions() if batch_options is None else BatchOptions(**batch_options)
+        )
 
     @property
     @abstractmethod

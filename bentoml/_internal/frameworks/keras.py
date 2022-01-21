@@ -185,46 +185,27 @@ def save(
     return _model.tag
 
 
+@attr.define(kw_only=False)
 class KerasRunner(TensorflowRunner):
-    _session: "BaseSession"
-    _graph: "Graph"
+    _graph: "Graph" = attr.ib(init=False)
 
-    @inject
-    def __init__(
-        self,
-        tag: t.Union[str, Tag],
-        predict_fn_name: str,
-        device_id: str,
-        predict_kwargs: t.Optional[t.Dict[str, t.Any]],
-        resource_quota: t.Optional[t.Dict[str, t.Any]],
-        batch_options: t.Optional[t.Dict[str, t.Any]],
-        model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
-    ):
-        super().__init__(
-            tag=tag,
-            predict_fn_name=predict_fn_name,
-            device_id=device_id,
-            partial_kwargs=predict_kwargs,
-            resource_quota=resource_quota,
-            batch_options=batch_options,
-            model_store=model_store,
-        )
-        self._session = get_session()
-
-    @property
-    def session(self) -> "BaseSession":
-        return self._session
-
-    # pylint: disable=attribute-defined-outside-init
     def _setup(self) -> None:
-        self._session.config = self._config_proto
         self._model = load(self._tag, model_store=self._model_store)
         raw_predict_fn = getattr(self._model, self._predict_fn_name)
         self._predict_fn = functools.partial(raw_predict_fn, **self._partial_kwargs)
 
-        if TF2:
+        if not TF2:
             self._graph = tf.compat.v1.get_default_graph()
-            self._session = tf.compat.v1.Session(graph=self._graph)
+
+            _config_proto = dict(
+                allow_soft_placement=True,
+                log_device_placement=False,
+                intra_op_parallelism_threads=self.num_concurrency_per_replica,
+                inter_op_parallelism_threads=self.num_concurrency_per_replica,
+            )
+            self._session = tf.compat.v1.Session(
+                graph=self._graph, config=tf.compat.v1.ConfigProto(**_config_proto)
+            )
 
     # pylint: disable=arguments-differ
     def _run_batch(  # type: ignore[override]
@@ -237,7 +218,6 @@ class KerasRunner(TensorflowRunner):
             input_data = np.array(input_data)
         with tf.device(self._device_id):
             if TF2:
-                tf.compat.v1.global_variables_initializer()
                 return self._predict_fn(input_data)
             else:
                 self._session.run(tf.compat.v1.global_variables_initializer())
@@ -250,7 +230,6 @@ def load_runner(
     tag: t.Union[str, Tag],
     *,
     predict_fn_name: str = "predict",
-    device_id: str = "CPU:0",
     predict_kwargs: t.Optional[t.Dict[str, t.Any]] = None,
     resource_quota: t.Union[None, t.Dict[str, t.Any]] = None,
     batch_options: t.Union[None, t.Dict[str, t.Any]] = None,
@@ -268,8 +247,6 @@ def load_runner(
             inference function to be used.
         predict_kwargs (`t.Dict[str, t.Any]`, `optional`, default to `None`):
             Dictionary of `predict()` kwargs that can be shared across different model.
-        device_id (`t.Union[str, int, t.List[t.Union[str, int]]]`, `optional`, default to `CPU:0`):
-            Optional devices to put the given model on. Refers to https://www.tensorflow.org/api_docs/python/tf/config
         resource_quota (`t.Dict[str, t.Any]`, default to `None`):
             Dictionary to configure resources allocation for runner.
         batch_options (`t.Dict[str, t.Any]`, default to `None`):
@@ -285,7 +262,6 @@ def load_runner(
     return KerasRunner(
         tag=tag,
         predict_fn_name=predict_fn_name,
-        device_id=device_id,
         predict_kwargs=predict_kwargs,
         resource_quota=resource_quota,
         batch_options=batch_options,

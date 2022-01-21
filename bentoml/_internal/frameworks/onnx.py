@@ -1,3 +1,4 @@
+# type: ignore[reportMissingTypeStubs]
 import shutil
 import typing as t
 import logging
@@ -8,16 +9,16 @@ from simple_di import inject
 from simple_di import Provide
 
 from bentoml import Tag
-from bentoml import Runner
 from bentoml.exceptions import BentoMLException
 from bentoml.exceptions import MissingDependencyException
+from bentoml._internal.frameworks import ModelRunner
 
 from ..types import PathType
 from ..models import Model
 from ..models import SAVE_NAMESPACE
 from ..runner.utils import Params
-from ..runner.utils import get_gpu_memory
 from ..configuration.containers import BentoMLContainer
+from ..configuration.containers import BentoRunnerContainer
 
 SUPPORTED_ONNX_BACKEND: t.List[str] = ["onnxruntime", "onnxruntime-gpu"]
 ONNX_EXT: str = ".onnx"
@@ -199,51 +200,31 @@ def save(
     return _model.tag
 
 
-class ONNXRunner(Runner):
-    @inject
-    def __init__(
-        self,
-        tag: t.Union[str, Tag],
-        backend: str,
-        gpu_device_id: int,
-        disable_copy_in_default_stream: bool,
-        providers: t.Optional["_ProviderType"],
-        session_options: t.Optional["ort.SessionOptions"],
-        resource_quota: t.Optional[t.Dict[str, t.Any]],
-        batch_options: t.Optional[t.Dict[str, t.Any]],
-        model_store: "ModelStore",
-    ):
-        if gpu_device_id != -1:
-            resource_quota = dict() if not resource_quota else resource_quota
-            if "gpus" not in resource_quota:
-                resource_quota["gpus"] = gpu_device_id
+@attr.define(kw_only=True)
+class ONNXRunner(ModelRunner):
+    backend: str
+    disable_copy_in_default_stream: bool
+    providers: t.Optional["_ProviderType"]
 
-        self._model_store = model_store
-        self._model_tag = Tag.from_taglike(tag)
-        name = f"{self.__class__.__name__}_{self._model_tag.name}"
-        super().__init__(name, resource_quota, batch_options)
-        self._backend = backend
-
-        if backend not in SUPPORTED_ONNX_BACKEND:
+    def _check_params(self):
+        if self.backend not in SUPPORTED_ONNX_BACKEND:
             raise BentoMLException(
-                f"'{backend}' runtime is currently not supported for ONNXModel"
+                f"'{self.backend}' runtime is currently not supported for ONNXModel"
             )
-        if providers is not None:
-            if not all(i in ort.get_all_providers() for i in flatten_list(providers)):
+        if self.providers is not None:
+            if not all(
+                i in ort.get_all_providers() for i in flatten_list(self.providers)
+            ):
                 raise BentoMLException(
-                    f"'{providers}' cannot be parsed by `onnxruntime`"
+                    f"'{self.providers}' cannot be parsed by `onnxruntime`"
                 )
-        else:
-            providers = self._get_default_providers(
-                gpu_device_id, disable_copy_in_default_stream
-            )
-        self._providers = providers
-        self._session_options = session_options
 
     @staticmethod
     def _get_default_providers(
         gpu_device_id: int, disable_copy_in_default_stream: bool
     ) -> "_ProviderType":
+        from ..utils.resource import get_gpu_memory
+
         if gpu_device_id != -1:
             _, free = get_gpu_memory(gpu_device_id)
             gpu_ = {
@@ -264,30 +245,11 @@ class ONNXRunner(Runner):
                 "CPUExecutionProvider",
             ]
         else:
-            providers = ort.get_available_providers()
+            providers = ort.get_available_providers()  # type: ignore[]
         return providers  # type: ignore[return-value]
-
-    def _get_default_session_options(
-        self, session_options: t.Optional["ort.SessionOptions"]
-    ) -> "ort.SessionOptions":
-        if session_options is not None:
-            return session_options
-        _session_options = ort.SessionOptions()
-        _session_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
-        _session_options.intra_op_num_threads = self.num_concurrency_per_replica
-        _session_options.inter_op_num_threads = self.num_concurrency_per_replica
-        _session_options.graph_optimization_level = (
-            ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-        )
-        return _session_options
-
-    @property
-    def required_models(self) -> t.List[Tag]:
-        return [self._model_tag]
 
     @property
     def num_concurrency_per_replica(self) -> int:
-        # TODO: support GPU threads
         if self.resource_quota.on_gpu:
             return 1
         return int(round(self.resource_quota.cpu))
@@ -298,70 +260,86 @@ class ONNXRunner(Runner):
             return len(self.resource_quota.gpus)
         return 1
 
-    # pylint: disable=arguments-differ,attribute-defined-outside-init
+    @property
+    def _gpu_device(self) -> int:
+        replica_id = BentoRunnerContainer.replica_id.get()
+        if replica_id is not None:
+            return int(self.resource_quota.gpus[replica_id - 1])
+        return int(self.resource_quota.gpus[0])
+
     def _setup(self) -> None:
-        session_options = self._get_default_session_options(self._session_options)
+        if self.providers is not None:
+            if not all(
+                i in ort.get_all_providers() for i in flatten_list(self.providers)
+            ):
+                raise BentoMLException(
+                    f"'{self.providers}' cannot be parsed by `onnxruntime`"
+                )
+            providers = self.providers
+        else:
+            providers = self._get_default_providers(
+                self._gpu_device, self.disable_copy_in_default_stream
+            )
+        session_options = ort.SessionOptions()  # type:ignore
+        session_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
+        session_options.intra_op_num_threads = self.num_concurrency_per_replica
+        session_options.inter_op_num_threads = self.num_concurrency_per_replica
+        session_options.graph_optimization_level = (
+            ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        )
         self._model = load(
-            self._model_tag,
-            backend=self._backend,
-            providers=self._providers,
-            session_options=session_options,
-            model_store=self._model_store,
+            self.tag,
+            backend=self.backend,
+            providers=providers,
+            session_options=session_options,  # type: ignore
+            model_store=self.model_store,
         )
         self._infer_func = getattr(self._model, "run")
+
+    @staticmethod
+    def _to_ndarray(
+        item: t.Union[
+            "torch.Tensor",
+            "TFTensor",
+            "np.ndarray",
+            "DataFrame",
+        ]
+    ) -> t.Any:
+        # TODO: check if imported before actual eval
+        import numpy as np
+        import torch
+        import pandas as pd
+        import tensorflow as tf
+
+        if isinstance(item, np.ndarray):
+            item = item.astype(np.float32)
+        elif isinstance(item, pd.DataFrame):
+            item = item.to_numpy()
+        elif isinstance(item, (tf.Tensor, torch.Tensor)):
+            item = item.numpy()
+        else:
+            raise TypeError(
+                f"`_run_batch` of {ONNXRunner.__name__} only takes "
+                "`numpy.ndarray` or `pd.DataFrame` as input parameters"
+            )
+        return item
 
     # pylint: disable=arguments-differ
     def _run_batch(  # type: ignore[reportIncompatibleMethodOverride]
         self,
         *args: t.Union[
-            "np.ndarray[t.Any, np.dtype[t.Any]]",
+            "np.ndarray",
             "DataFrame",
             "torch.Tensor",
             "TFTensor",
         ],
     ) -> t.Any:
-        params = Params[
-            t.Union[
-                "torch.Tensor",
-                "TFTensor",
-                "np.ndarray[t.Any, np.dtype[t.Any]]",
-                "DataFrame",
-            ]
-        ](*args)
-
-        def _mapping(
-            item: t.Union[
-                "torch.Tensor",
-                "TFTensor",
-                "np.ndarray[t.Any, np.dtype[t.Any]]",
-                "DataFrame",
-            ]
-        ) -> t.Any:
-            # TODO: check if imported before actual eval
-            import numpy as np
-            import torch
-            import pandas as pd
-            import tensorflow as tf
-
-            if isinstance(item, np.ndarray):
-                item = item.astype(np.float32)
-            elif isinstance(item, pd.DataFrame):
-                item = item.to_numpy()
-            elif isinstance(item, (tf.Tensor, torch.Tensor)):
-                item = item.numpy()
-            else:
-                raise TypeError(
-                    f"`_run_batch` of {self.__class__.__name__} only takes "
-                    "`numpy.ndarray` or `pd.DataFrame` as input parameters"
-                )
-            return item
-
-        params = params.map(_mapping)
-
+        params = Params(*args)
+        params = params.map(self._to_ndarray)
         input_names = {
             i.name: val for i, val in zip(self._model.get_inputs(), params.args)
         }
-        output_names = [_.name for _ in self._model.get_outputs()]
+        output_names = [i.name for i in self._model.get_outputs()]
         return self._infer_func(output_names, input_names)
 
 
@@ -371,10 +349,8 @@ def load_runner(
     *,
     name: t.Optional[str] = None,
     backend: str = "onnxruntime",
-    gpu_device_id: int = -1,
     disable_copy_in_default_stream: bool = False,
     providers: t.Optional["_ProviderType"] = None,
-    session_options: t.Optional["ort.SessionOptions"] = None,
     resource_quota: t.Optional[t.Dict[str, t.Any]] = None,
     batch_options: t.Optional[t.Dict[str, t.Any]] = None,
     model_store: "ModelStore" = Provide[BentoMLContainer.model_store],
@@ -387,8 +363,6 @@ def load_runner(
     Args:
         tag (`str`):
             Model tag to retrieve model from modelstore
-        gpu_device_id (`int`, `optional`, default to `-1`):
-            GPU device ID. Currently only support CUDA.
         disable_copy_in_default_stream (`bool`, `optional`, default to `False`):
             Whether to do copies in the default stream or use separate streams. Refers to
              https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#do_copy_in_default_stream
@@ -398,8 +372,6 @@ def load_runner(
         providers (`List[Union[str, t.Tuple[str, Dict[str, Any]]`, `optional`, default to `None`):
             Different providers provided by users. By default BentoML will use `CPUExecutionProvider` when
              loading a model
-        session_options (`onnxruntime.SessionOptions`, `optional`, default to `None`):
-            SessionOptions per usecase. If not specified, then default to None.
         resource_quota (`t.Dict[str, t.Any]`, default to `None`):
             Dictionary to configure resources allocation for runner.
         batch_options (`t.Dict[str, t.Any]`, default to `None`):
@@ -412,15 +384,16 @@ def load_runner(
 
     Examples::
     """
-    return ONNXRunner(
+    tag = Tag.from_taglike(tag)
+    if name is None:
+        name = tag.name
+    return ONNXRunner(  # pylint: disable=unexpected-keyword-arg
         tag=tag,
         backend=backend,
-        gpu_device_id=gpu_device_id,
         disable_copy_in_default_stream=disable_copy_in_default_stream,
         providers=providers,
-        session_options=session_options,
+        model_store=model_store,
         name=name,
         resource_quota=resource_quota,
         batch_options=batch_options,
-        model_store=model_store,
     )

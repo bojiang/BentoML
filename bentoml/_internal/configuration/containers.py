@@ -326,3 +326,32 @@ class BentoServerContainerClass:
 
 
 BentoServerContainer = BentoServerContainerClass()
+
+
+@dataclass
+class BentoRunnerContainerClass:
+    replica_id = providers.Static[t.Optional[int]](None)
+
+    @providers.SingletonFactory
+    @staticmethod
+    def default_gpus() -> t.List[str]:
+        from ..utils.resource import get_system_gpus
+
+        return get_system_gpus()
+
+    @providers.SingletonFactory
+    @staticmethod
+    def default_cpu() -> float:
+        from ..utils.resource import get_system_cpu
+
+        return get_system_cpu()
+
+    @providers.SingletonFactory
+    @staticmethod
+    def default_mem() -> int:
+        from ..utils.resource import get_system_mem
+
+        return get_system_mem()
+
+
+BentoRunnerContainer = BentoRunnerContainerClass()

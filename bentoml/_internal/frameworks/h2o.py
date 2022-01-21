@@ -20,8 +20,6 @@ from ..configuration.containers import BentoMLContainer
 if TYPE_CHECKING:
     import pandas as pd
 
-    from bentoml._internal.frameworks import AnyNdarray
-
     from ..models import ModelStore
 
 try:
@@ -166,8 +164,8 @@ class H2ORunner(ModelRunner):
     # pylint: disable=arguments-differ
     def _run_batch(  # type: ignore[override]
         self,
-        input_data: t.Union["np.ndarray[t.Any, t.Any]", "pd.DataFrame", h2o.H2OFrame],
-    ) -> "np.ndarray[t.Any, t.Any]":
+        input_data: t.Union["np.ndarray", "pd.DataFrame", h2o.H2OFrame],
+    ) -> "np.ndarray":
         if not isinstance(input_data, h2o.H2OFrame):
             input_data = h2o.H2OFrame(input_data)
         res = self._predict_fn(input_data)
@@ -176,7 +174,7 @@ class H2ORunner(ModelRunner):
             res = t.cast(
                 "pd.DataFrame", res.as_data_frame(use_pandas=True, header=True)
             )
-        return t.cast("AnyNdarray", np.asarray(res))
+        return np.asarray(res)
 
 
 @inject

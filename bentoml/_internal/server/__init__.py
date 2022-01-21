@@ -12,6 +12,7 @@ from simple_di import Provide
 from bentoml import load
 
 from ..configuration import get_debug_mode
+from ..configuration.containers import BentoRunnerContainer
 from ..configuration.containers import BentoServerContainer
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ bentoml._internal.server.start_dev_api_server(
     working_dir="{working_dir}",
     reload={reload},
     reload_delay={reload_delay},
-    instance_id=$(CIRCUS.WID),
+    replica_id=$(CIRCUS.WID),
 )"""
     watchers.append(
         Watcher(
@@ -166,7 +167,7 @@ bentoml._internal.server.start_prod_runner_server(
     "{bento_identifier}",
     "{runner_name}",
     working_dir="{working_dir}",
-    instance_id=$(CIRCUS.WID),
+    replica_id=$(CIRCUS.WID),
     fd=$(circus.sockets.{runner_name}),
 )"""
         watchers.append(
@@ -190,7 +191,7 @@ bentoml._internal.server.start_prod_api_server(
     port={port},
     host="{host}",
     working_dir="{working_dir}",
-    instance_id=$(CIRCUS.WID),
+    replica_id=$(CIRCUS.WID),
     runner_map={cmd_runner_arg},
     backlog={backlog},
 )"""
@@ -227,7 +228,7 @@ def start_dev_api_server(
     working_dir: t.Optional[str] = None,
     reload: bool = False,
     reload_delay: t.Optional[float] = None,
-    instance_id: t.Optional[int] = None,  # pylint: disable=unused-argument
+    replica_id: t.Optional[int] = None,  # pylint: disable=unused-argument
 ):
     import uvicorn  # type: ignore
 
@@ -259,7 +260,7 @@ def start_prod_api_server(
     runner_map: t.Dict[str, str],
     backlog: int,
     working_dir: t.Optional[str] = None,
-    instance_id: t.Optional[int] = None,  # pylint: disable=unused-argument
+    replica_id: t.Optional[int] = None,  # pylint: disable=unused-argument
 ):
     import uvicorn  # type: ignore
 
@@ -282,16 +283,21 @@ def start_prod_runner_server(
     name: str,
     fd: int,
     working_dir: t.Optional[str] = None,
-    instance_id: t.Optional[int] = None,
+    replica_id: t.Optional[int] = None,
 ):
+    BentoRunnerContainer.replica_id.set(replica_id)
+
     import uvicorn  # type: ignore
 
     from bentoml._internal.server.runner_app import RunnerAppFactory
 
     svc = load(bento_identifier, working_dir=working_dir)
     runner = svc.runners[name]
-    app = RunnerAppFactory(runner, instance_id=instance_id)()
+    app = RunnerAppFactory(runner)()
 
     uvicorn.run(
-        app, fd=fd, log_level="info", log_config=UVICORN_LOGGING_CONFIG  # type: ignore
+        app,  # type: ignore
+        fd=fd,
+        log_level="info",
+        log_config=UVICORN_LOGGING_CONFIG,
     )

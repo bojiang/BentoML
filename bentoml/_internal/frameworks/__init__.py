@@ -11,11 +11,7 @@ from ..runner.runner import ResourceQuota
 from ..configuration.containers import BentoMLContainer
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from ..models import ModelStore
-
-    AnyNdarray = np.ndarray[t.Any, np.dtype[t.Any]]
 
 
 VARNAME_RE = re.compile(r"\W|^(?=\d)")

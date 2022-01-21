@@ -19,7 +19,6 @@ from ..utils.pkg import get_pkg_version
 from ..configuration.containers import BentoMLContainer
 
 if TYPE_CHECKING:
-    from . import AnyNdarray
     from ..models import ModelStore
 
 try:
@@ -186,7 +185,7 @@ class EasyOCRRunner(ModelRunner):
     predict_params: t.Optional[t.Dict[str, t.Any]] = attr.ib()
 
     _model: easyocr.Reader = attr.ib(init=False)
-    _predict_fn: t.Callable[["AnyNdarray"], "AnyNdarray"] = attr.ib(init=False)
+    _predict_fn: t.Callable[["np.ndarray"], "np.ndarray"] = attr.ib(init=False)
 
     @property
     def num_concurrency_per_replica(self) -> int:
@@ -208,8 +207,8 @@ class EasyOCRRunner(ModelRunner):
 
     # pylint: disable=arguments-differ
     def _run_batch(  # type: ignore[override]
-        self, input_data: "AnyNdarray"
-    ) -> "AnyNdarray":
+        self, input_data: "np.ndarray"
+    ) -> "np.ndarray":
         if self.predict_params is None:
             res = self._predict_fn(input_data)
         else:

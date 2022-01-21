@@ -1,16 +1,8 @@
-import os
 import re
-import math
-import ctypes
 import typing as t
 import logging
 import itertools
 from typing import TYPE_CHECKING
-from functools import lru_cache
-
-from simple_di.providers import SingletonFactory
-
-from ...exceptions import BentoMLException
 
 logger = logging.getLogger(__name__)
 
@@ -242,168 +234,19 @@ def mem_converter(mem: t.Union[int, str]) -> int:
     raise ValueError(f"Invalid MEM resource limit '{mem}'")
 
 
-@lru_cache(maxsize=1)
-def query_cgroup_cpu_count() -> float:
-    # Query active cpu processor count using cgroup v1 API, based on OpenJDK
-    # implementation for `active_processor_count` using cgroup v1:
-    # https://github.com/openjdk/jdk/blob/master/src/hotspot/os/linux/cgroupSubsystem_linux.cpp
-    # For cgroup v2, see:
-    # https://github.com/openjdk/jdk/blob/master/src/hotspot/os/linux/cgroupV2Subsystem_linux.cpp
-    def _read_integer_file(filename: str) -> int:
-        with open(filename, "r", encoding="utf-8") as f:
-            return int(f.read().rstrip())
-
-    cgroup_root = "/sys/fs/cgroup/"
-    cfs_quota_us_file = os.path.join(cgroup_root, "cpu", "cpu.cfs_quota_us")
-    cfs_period_us_file = os.path.join(cgroup_root, "cpu", "cpu.cfs_period_us")
-    shares_file = os.path.join(cgroup_root, "cpu", "cpu.shares")
-
-    quota = shares = period = -1
-    if os.path.isfile(cfs_quota_us_file):
-        quota = _read_integer_file(cfs_quota_us_file)
-
-    if os.path.isfile(shares_file):
-        shares = _read_integer_file(shares_file)
-        if shares == 1024:
-            shares = -1
-
-    if os.path.isfile(cfs_period_us_file):
-        period = _read_integer_file(cfs_period_us_file)
-
-    os_cpu_count = float(os.cpu_count() or 1)
-
-    limit_count = math.inf
-    quota_count = 0.0
-    share_count = 0.0
-
-    if quota > -1 and period > 0:
-        quota_count = float(quota) / float(period)
-    if shares > -1:
-        share_count = float(shares) / float(1024)
-
-    if quota_count != 0 and share_count != 0:
-        limit_count = min(quota_count, share_count)
-    if quota_count != 0:
-        limit_count = quota_count
-    if share_count != 0:
-        limit_count = share_count
-
-    return float(min(limit_count, os_cpu_count))
+def _gpu_formater(i: t.Union[int, str]) -> str:
+    if isinstance(i, int):
+        return str(i)
+    return i
 
 
-@SingletonFactory
-def _cuda_lib() -> "ctypes.CDLL":
-    libs = ("libcuda.so", "cuda.dll")
-    for lib in libs:
-        try:
-            return ctypes.CDLL(lib)
-        except OSError:
-            continue
-    raise OSError(f"could not load any of: {' '.join(libs)}")
-
-
-@SingletonFactory
-def _init_var() -> t.Tuple["ctypes.CDLL", "PlcType"]:
-    # https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__DEVICE.html
-    # TODO: add threads_per_core, cores, Compute Capability
-    err = ctypes.c_char_p()
-    plc: PlcType = {
-        "err": err,
-        "device": ctypes.c_int(),
-        "num_gpus": ctypes.c_int(),
-        "context": ctypes.c_void_p(),
-        "free_mem": ctypes.c_size_t(),
-        "total_mem": ctypes.c_size_t(),
-    }
-
-    try:
-        _drv = _cuda_lib.get()
-        res = _drv.cuInit(0)
-        if res != CUDA_SUCCESS:
-            _drv.cuGetErrorString(res, ctypes.byref(err))
-            logger.error(f"cuInit failed with error code {res}: {str(err.value)}")
-        return _drv, plc
-    except OSError as e:
-        raise BentoMLException(
-            f"{e}\nMake sure to have CUDA "
-            f"installed you are intending "
-            f"to use GPUs with BentoML."
-        )
-
-
-def gpu_converter(gpus: t.Optional[t.Union[int, str, t.List[str]]]) -> t.List[str]:
-    if gpus is not None:
-        drv, plc = _init_var.get()
-
-        res = drv.cuDeviceGetCount(ctypes.byref(plc["num_gpus"]))
-        if res != CUDA_SUCCESS:
-            drv.cuGetErrorString(res, ctypes.byref(plc["err"]))
-            logger.error(
-                f"cuDeviceGetCount failed with error code {res}: {str(plc['err'].value)}"
-            )
-
-        def _validate_dev(dev_id: t.Union[int, str]) -> bool:
-            _res = drv.cuDeviceGet(ctypes.byref(plc["device"]), int(dev_id))
-            if _res != CUDA_SUCCESS:
-                drv.cuGetErrorString(_res, ctypes.byref(plc["err"]))
-                logger.warning(
-                    "cuDeviceGet failed "
-                    f"with error code {_res}: {str(plc['err'].value)}"
-                )
-                return False
-            return True
-
-        if isinstance(gpus, (int, str)):
-            if gpus == "all":
-                return [str(dev) for dev in range(plc["num_gpus"].value)]
-            else:
-                if _validate_dev(gpus):
-                    return [str(gpus)]
-                raise BentoMLException(
-                    f"Unknown GPU devices. Available devices: {plc['num_gpus'].value}"
-                )
-        else:
-            return list(
-                itertools.chain.from_iterable([gpu_converter(gpu) for gpu in gpus])
-            )
-    return list()
-
-
-def get_gpu_memory(dev: int) -> t.Tuple[int, int]:
-    """Return Total Memory and Free Memory in given GPU device. in MiB"""
-    drv, plc = _init_var.get()
-
-    res = drv.cuDeviceGet(ctypes.byref(plc["device"]), dev)
-    if res != CUDA_SUCCESS:
-        drv.cuGetErrorString(res, ctypes.byref(plc["err"]))
-        logger.error(
-            "cuDeviceGet failed " f"with error code {res}: {str(plc['err'].value)}"
-        )
-    try:
-        res = drv.cuCtxCreate_v2(ctypes.byref(plc["context"]), 0, plc["device"])
-    except AttributeError:
-        res = drv.cuCtxCreate(ctypes.byref(plc["context"]), 0, plc["device"])
-    if res != CUDA_SUCCESS:
-        drv.cuGetErrorString(res, ctypes.byref(plc["err"]))
-        logger.error(
-            f"cuCtxCreate failed with error code {res}: {str(plc['err'].value)}"
-        )
-
-    try:
-        res = drv.cuMemGetInfo_v2(
-            ctypes.byref(plc["free_mem"]), ctypes.byref(plc["total_mem"])
-        )
-    except AttributeError:
-        res = drv.cuMemGetInfo(
-            ctypes.byref(plc["free_mem"]), ctypes.byref(plc["total_mem"])
-        )
-    if res != CUDA_SUCCESS:
-        drv.cuGetErrorString(res, ctypes.byref(plc["err"]))
-        logger.error(
-            f"cuMemGetInfo failed with error code {res}: " f"{str(plc['err'].value)}"
-        )
-    _total_mem = plc["total_mem"].value
-    _free_mem = plc["free_mem"].value
-    logger.debug(f"Total Memory: {_total_mem} MiB\nFree Memory: {_free_mem} MiB")
-    drv.cuCtxDetach(plc["context"])
-    return _total_mem, _free_mem
+def gpu_converter(
+    gpus: t.Optional[t.Union[int, str, t.Sequence[t.Union[int, str]]]]
+) -> t.List[str]:
+    if gpus is None:
+        return []
+    if isinstance(gpus, (int, str)):
+        return [_gpu_formater(gpus)]
+    if isinstance(gpus, (list, tuple)):
+        return [_gpu_formater(g) for g in gpus]
+    raise ValueError(f"Invalid GPUS resource '{gpus}'")

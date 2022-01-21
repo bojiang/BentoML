@@ -1,3 +1,4 @@
+# type: ignore[reportMissingTypeStubs]
 import os
 import typing as t
 import importlib
@@ -20,7 +21,7 @@ from ..frameworks import ModelRunner
 from ..configuration.containers import BentoMLContainer
 
 if TYPE_CHECKING:
-
+    import mlflow
     import mlflow.pyfunc
     from mlflow.pyfunc import PyFuncModel
 
@@ -188,7 +189,7 @@ def import_from_uri(
     exists, fpath = _validate_file_exists("MLmodel", mlflow_obj_path)
     if not exists:
         raise BentoMLException("Downloaded path is not a valid MLflow Model.")
-    with Path(fpath).open("r") as mf:
+    with Path(fpath).open("r", encoding="utf-8") as mf:
         conf = yaml.safe_load(mf.read())
         flavor = conf["flavors"]["python_function"]
         _model.info.options["flavor"] = flavor["loader_module"]
@@ -210,8 +211,9 @@ class PyFuncRunner(ModelRunner):
     def num_replica(self) -> int:
         return 1
 
-    # pylint: disable=arguments-differ,attribute-defined-outside-init
-    def _setup(self) -> None:  # type: ignore[override]
+    def _setup(self) -> None:
+        import mlflow.pyfunc
+
         model_info = self.model_store.get(self.tag)
         path = model_info.info.options["mlflow_folder"]
         artifact_path = model_info.path_of(path)

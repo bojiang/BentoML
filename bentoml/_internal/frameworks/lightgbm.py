@@ -206,6 +206,10 @@ def save(
     return _model.tag
 
 
+# 1. remove booster_params of load_runner
+# 2. bidir sync for booster_params and resource_quota
+
+
 @attr.define(kw_only=True)
 class LightGBMRunner(ModelRunner):
     booster_params: t.Optional[t.Dict[str, t.Union[str, int]]] = attr.ib()
@@ -223,6 +227,9 @@ class LightGBMRunner(ModelRunner):
         ):
             return True
         return False
+
+    def _check_options(self):
+        assert not self.resource_quota.on_gpu
 
     @property
     def num_concurrency_per_replica(self) -> int:

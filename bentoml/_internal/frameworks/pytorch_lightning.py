@@ -1,7 +1,6 @@
 import typing as t
 from typing import TYPE_CHECKING
 
-import attr
 from simple_di import inject
 from simple_di import Provide
 
@@ -11,7 +10,7 @@ from bentoml.exceptions import MissingDependencyException
 from ..models import Model
 from ..models import PT_EXT
 from ..models import SAVE_NAMESPACE
-from .pytorch import _PyTorchRunner as PyTorchLightningRunner  # type: ignore[reportPrivateUsage] # noqa: LN001
+from .pytorch import PyTorchRunner as PyTorchLightningRunner
 from ..utils.pkg import get_pkg_version
 from ..configuration.containers import BentoMLContainer
 
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
 
 try:
     import torch
-    import pytorch_lightning as pl  # noqa: F811
+    import pytorch_lightning  # type: ignore[reportUnusedVariable]  # noqa: F811
 except ImportError:  # pragma: no cover
     raise MissingDependencyException(_PL_IMPORT_ERROR)
 
@@ -163,7 +162,7 @@ def load_runner(
     tag: t.Union[str, Tag],
     *,
     predict_fn_name: str = "__call__",
-    device_id: str = "cpu:0",
+    name: t.Optional[str] = None,
     partial_kwargs: t.Optional[t.Dict[str, t.Any]] = None,
     resource_quota: t.Union[None, t.Dict[str, t.Any]] = None,
     batch_options: t.Union[None, t.Dict[str, t.Any]] = None,
@@ -198,10 +197,13 @@ def load_runner(
         runner = bentoml.pytorch_lightning.load_runner("lit_classifier:20201012_DE43A2")
         runner.run(pd.DataFrame("/path/to/csv"))
     """  # noqa
+    tag = Tag.from_taglike(tag)
+    if name is None:
+        name = tag.name
     return PyTorchLightningRunner(
         tag=tag,
         predict_fn_name=predict_fn_name,
-        device_id=device_id,
+        name=name,
         partial_kwargs=partial_kwargs,
         resource_quota=resource_quota,
         batch_options=batch_options,

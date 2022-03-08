@@ -5,7 +5,6 @@ import time
 import typing as t
 import urllib
 import logging
-import threading
 import contextlib
 import subprocess
 import urllib.request
@@ -23,55 +22,8 @@ if TYPE_CHECKING:
     from starlette.datastructures import Headers
     from starlette.datastructures import FormData
 
-    import docker
-
 
 clean_context = contextlib.ExitStack()
-
-
-@cached_contextmanager("{bento}, {config_file}, {workdir}, {docker}, {dev_server}")
-def host_bento(
-    bento: str,
-    config_file: str = "bentoml_config.yml",
-    workdir: str = "./",
-    docker: bool = False,
-    dev_server: bool = False,
-) -> t.Generator[str, None, None]:
-    # TODO: currently not used
-
-    if not os.path.exists(config_file):
-        raise Exception(f"config file not found: {config_file}")
-
-    if docker:
-        image = clean_context.enter_context(
-            build_api_server_docker_image(bento, "example_service")  # TODO
-        )
-        host = clean_context.enter_context(
-            run_api_server_in_docker(
-                image,
-                config_file=config_file,
-            )
-        )
-        yield host
-    elif dev_server:
-        host = clean_context.enter_context(
-            run_api_server(
-                bento,
-                config_file=config_file,
-                workdir=workdir,
-                dev_server=True,
-            )
-        )
-        yield host
-    else:
-        host = clean_context.enter_context(
-            run_api_server(
-                bento,
-                config_file=config_file,
-                workdir=workdir,
-            )
-        )
-        yield host
 
 
 async def parse_multipart_form(headers: "Headers", body: bytes) -> "FormData":
@@ -113,44 +65,11 @@ async def async_request(
     return r.status, Headers(headers), r_body
 
 
-def wait_until_container_ready(container_name, check_message, timeout_seconds=120):
-    import docker
-    import docker.errors
-
-    docker_client = docker.from_env()
-
-    start_time = time.time()
-    while True:
-        time.sleep(1)
-
-        # Raise timeout, if exceeds timeout limit
-        if time.time() - start_time > timeout_seconds:
-            raise TimeoutError(f'Waiting for container "{container_name}" timed out')
-
-        try:
-            container_list = docker_client.containers.list(
-                filters={"name": container_name}
-            )
-            if not container_list:
-                continue
-        except docker.errors.NotFound:
-            continue
-
-        logger.info("Container list: " + str(container_list))
-        assert (
-            len(container_list) == 1
-        ), f"should be exact one container with name {container_name}"
-
-        container_log = container_list[0].logs().decode()
-        if check_message in container_log:
-            logger.info(
-                f"Found message indicating container readiness in container log: "
-                f"{container_log}"
-            )
-            break
-
-
-def _wait_until_api_server_ready(host_url, timeout, container=None, check_interval=1):
+def _wait_until_api_server_ready(
+    host_url: str,
+    timeout: float,
+    check_interval: float = 1,
+) -> None:
     start_time = time.time()
     proxy_handler = urllib.request.ProxyHandler({})
     opener = urllib.request.build_opener(proxy_handler)
@@ -159,8 +78,6 @@ def _wait_until_api_server_ready(host_url, timeout, container=None, check_interv
         try:
             if opener.open(f"http://{host_url}/readyz", timeout=1).status == 200:
                 return
-            elif container and container.status != "running":
-                break
             else:
                 logger.info("Waiting for host %s to be ready..", host_url)
                 time.sleep(check_interval)
@@ -168,13 +85,6 @@ def _wait_until_api_server_ready(host_url, timeout, container=None, check_interv
             logger.info(f"retrying to connect to the host {host_url}...")
             ex = e
             time.sleep(check_interval)
-        finally:
-            if container:
-                container_logs = container.logs()
-                if container_logs:
-                    logger.info(f"Container {container.id} logs:")
-                    for log_record in container_logs.decode().split("\r\n"):
-                        logger.info(f">>> {log_record}")
     else:
         logger.info("Timeout!")
         raise AssertionError(
@@ -184,98 +94,101 @@ def _wait_until_api_server_ready(host_url, timeout, container=None, check_interv
 
 
 @contextmanager
-def export_service_bundle(bento_service):
+def export_service_bundle(_):
     """
     Export a bentoml service to a temporary directory, yield the path.
     Delete the temporary directory on close.
     """
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as path:
-        bento_service.save_to_dir(path)
-        yield path
+    yield
 
 
-@cached_contextmanager("{saved_bundle_path}, {image_tag}")
+@cached_contextmanager("{service_path}, {image_tag}")
 def build_api_server_docker_image(
-    saved_bundle_path, image_tag="test_bentoml_server"
-) -> "docker.Image":
+    service_path: str,
+    image_tag: str = "test_bentoml_server",
+) -> t.Generator[str, None, None]:
     """
     Build the docker image for a saved bentoml bundle, yield the docker image object.
     """
+    subprocess.check_call(["bentoml", "build", service_path])
 
-    import docker
-    import docker.errors
+    import bentoml
 
-    client = docker.from_env()
-    logger.info(
-        f"Building API server docker image from build context: {saved_bundle_path}"
+    service_name = bentoml.load(service_path).name
+    subprocess.check_call(
+        ["bentoml", "containerize", service_path, "--label", service_name]
     )
-    try:
-        image, _ = client.images.build(path=saved_bundle_path, tag=image_tag, rm=False)
-        yield image
-        client.images.remove(image.id)
-    except docker.errors.BuildError as e:
-        for line in e.build_log:
-            if "stream" in line:
-                print(line["stream"].strip())
-        raise
+
+    logger.info(f"Building API server docker image from build context: {service_path}")
+    subprocess.check_call(
+        [
+            "docker",
+            "build",
+            "-t",
+            image_tag,
+            "-f",
+            "./Dockerfile",
+            service_path,
+        ]
+    )
+    yield image_tag
+    subprocess.check_call(["docker", "rmi", image_tag])
 
 
-@cached_contextmanager("{image.id}")
-def run_api_server_in_docker(image, config_file=None, timeout=90):
+@cached_contextmanager("{image_tag}, {config_file}")
+def run_api_server_in_docker(
+    image_tag: str,
+    config_file: t.Optional[str] = None,
+    timeout: float = 90,
+):
     """
     Launch a bentoml service container from a docker image, yields the host URL.
     """
-    import docker
-
-    client = docker.from_env()
-
+    container_name = f"bentoml-test-{image_tag}"
     with reserve_free_port() as port:
         pass
 
-    command_args = "--workers 1"
+    cmd = [
+        "docker",
+        "run",
+        "--name",
+        container_name,
+        "--rm",
+        "--publish",
+        f"{port}:5000",
+        "--env",
+        "BENTOML_LOG_STDOUT=true",
+        "--env",
+        "BENTOML_LOG_STDERR=true",
+    ]
 
     if config_file is not None:
-        environment = ["BENTOML_CONFIG=/home/bentoml/bentoml_config.yml"]
-        volumes = {
-            os.path.abspath(config_file): {
-                "bind": "/home/bentoml/bentoml_config.yml",
-                "mode": "ro",
-            }
-        }
-    else:
-        environment = None
-        volumes = None
+        cmd.extend(["--env", "BENTOML_CONFIG=/home/bentoml/bentoml_config.yml"])
+        cmd.extend(
+            ["-v", f"{os.path.abspath(config_file)}:/home/bentoml/bentoml_config.yml"]
+        )
 
-    container = client.containers.run(
-        image=image.id,
-        command=command_args,
-        tty=True,
-        ports={"3000/tcp": port},
-        detach=True,
-        volumes=volumes,
-        environment=environment,
-    )
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
         host_url = f"127.0.0.1:{port}"
-        _wait_until_api_server_ready(host_url, timeout, container)
+        _wait_until_api_server_ready(host_url, timeout)
         yield host_url
     finally:
-        print(container.logs())
-        container.stop()
-        container.remove()
-        time.sleep(1)  # make sure container stopped & deleted
+        print(proc.communicate())
+        proc.terminate()
+        time.sleep(0.5)  # make sure container stopped & deleted
+        subprocess.call(["docker", "rm", "-f", container_name])
+        time.sleep(0.5)  # make sure container stopped & deleted
 
 
 @contextmanager
 def run_api_server(
-    bento,
-    workdir=None,
-    config_file=None,
-    dev_server=False,
-    timeout=90,
+    bento: str,
+    workdir: t.Optional[str] = None,
+    config_file: t.Optional[str] = None,
+    dev_server: bool = False,
+    timeout: float = 90,
 ):
     """
     Launch a bentoml service directly by the bentoml CLI, yields the host URL.
@@ -299,12 +212,12 @@ def run_api_server(
 
     print(cmd)
 
-    def print_log(p):
-        try:
-            for line in p.stdout:
-                print(line.decode(), end="")
-        except ValueError:
-            pass
+    # def print_log(p: "subprocess.Popen"):
+    # try:
+    # for line in p.stdout:
+    # print(line.decode(), end="")
+    # except ValueError:
+    # pass
 
     if config_file is not None:
         my_env["BENTOML_CONFIG"] = os.path.abspath(config_file)
@@ -312,11 +225,10 @@ def run_api_server(
     p = subprocess.Popen(
         cmd,
         stderr=subprocess.STDOUT,
-        stdout=subprocess.PIPE,
         env=my_env,
     )
     try:
-        threading.Thread(target=print_log, args=(p,), daemon=True).start()
+        # threading.Thread(target=print_log, args=(p,), daemon=True).start()
         host_url = f"127.0.0.1:{port}"
         _wait_until_api_server_ready(host_url, timeout=timeout)
         yield host_url
@@ -324,3 +236,46 @@ def run_api_server(
         # TODO: can not terminate the subprocess on Windows
         p.terminate()
         p.wait()
+
+
+@cached_contextmanager("{bento}, {config_file}, {workdir}, {docker}, {dev_server}")
+def host_bento(
+    bento: str,
+    config_file: str = "bentoml_config.yml",
+    workdir: str = "./",
+    docker: bool = False,
+    dev_server: bool = False,
+) -> t.Generator[str, None, None]:
+    if not os.path.exists(config_file):
+        raise Exception(f"config file not found: {config_file}")
+
+    if docker:
+        image = clean_context.enter_context(
+            build_api_server_docker_image(bento, "example_service")  # TODO
+        )
+        host = clean_context.enter_context(
+            run_api_server_in_docker(
+                image,
+                config_file=config_file,
+            )
+        )
+        yield host
+    elif dev_server:
+        host = clean_context.enter_context(
+            run_api_server(
+                bento,
+                config_file=config_file,
+                workdir=workdir,
+                dev_server=True,
+            )
+        )
+        yield host
+    else:
+        host = clean_context.enter_context(
+            run_api_server(
+                bento,
+                config_file=config_file,
+                workdir=workdir,
+            )
+        )
+        yield host

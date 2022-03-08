@@ -6,8 +6,6 @@ import typing as t
 import numpy as np
 import pytest
 
-from bentoml.testing.server import run_api_server
-
 
 @pytest.fixture()
 def img_file(tmpdir) -> str:
@@ -38,11 +36,12 @@ def pytest_configure(config):  # pylint: disable=unused-argument
 
 @pytest.fixture(scope="session")
 def host() -> t.Generator[str, None, None]:
-    import bentoml
+    from bentoml.testing.server import run_api_server_in_docker
+    from bentoml.testing.server import build_api_server_docker_image
 
-    bentoml.build("service:svc")
-
-    with run_api_server(
-        bento="general:latest", config_file="bentoml_config.yml"
-    ) as host:
-        yield host
+    with build_api_server_docker_image(service_path=".") as image_tag:
+        with run_api_server_in_docker(
+            image_tag,
+            config_file="bentoml_config.yml",
+        ) as host:
+            yield host

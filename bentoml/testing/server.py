@@ -69,28 +69,33 @@ def _wait_until_api_server_ready(
     host_url: str,
     timeout: float,
     check_interval: float = 1,
-) -> None:
+    popen: t.Optional["subprocess.Popen[bytes]"] = None,
+) -> bool:
     start_time = time.time()
     proxy_handler = urllib.request.ProxyHandler({})
     opener = urllib.request.build_opener(proxy_handler)
     ex = None
     while time.time() - start_time < timeout:
         try:
-            if opener.open(f"http://{host_url}/readyz", timeout=1).status == 200:
-                return
+            if popen:
+                popen.poll()
+                if popen.returncode is not None:
+                    return False
+            elif opener.open(f"http://{host_url}/readyz", timeout=1).status == 200:
+                return True
             else:
                 logger.info("Waiting for host %s to be ready..", host_url)
                 time.sleep(check_interval)
-        except Exception as e:  # pylint:disable=broad-except
-            logger.info(f"retrying to connect to the host {host_url}...")
+        except ConnectionError as e:  # pylint:disable=broad-except
+            logger.info(f"[{e}]retrying to connect to the host {host_url}...")
             ex = e
             time.sleep(check_interval)
     else:
-        logger.info("Timeout!")
-        raise AssertionError(
+        logger.info(
             f"Timed out waiting {timeout} seconds for Server {host_url} to be ready, "
             f"exception: {ex}"
         )
+        return False
 
 
 @contextmanager
@@ -102,35 +107,23 @@ def export_service_bundle(_):
     yield
 
 
-@cached_contextmanager("{service_path}, {image_tag}")
+@cached_contextmanager("{project_path}, {image_tag}")
 def build_api_server_docker_image(
-    service_path: str,
-    image_tag: str = "test_bentoml_server",
+    project_path: str, image_tag: t.Optional[str] = None
 ) -> t.Generator[str, None, None]:
     """
     Build the docker image for a saved bentoml bundle, yield the docker image object.
     """
-    subprocess.check_call(["bentoml", "build", service_path])
-
     import bentoml
 
-    service_name = bentoml.load(service_path).name
-    subprocess.check_call(
-        ["bentoml", "containerize", service_path, "--label", service_name]
-    )
+    bento = bentoml.bentos.build_bentofile(build_ctx=project_path)
+    tag = bento.info.tag
+    if image_tag is None:
+        image_tag = tag.name
 
-    logger.info(f"Building API server docker image from build context: {service_path}")
-    subprocess.check_call(
-        [
-            "docker",
-            "build",
-            "-t",
-            image_tag,
-            "-f",
-            "./Dockerfile",
-            service_path,
-        ]
-    )
+    logger.info(f"Building API server docker image from build context: {project_path}")
+    subprocess.check_call(["bentoml", "containerize", str(tag), "-t", image_tag])
+
     yield image_tag
     subprocess.check_call(["docker", "rmi", image_tag])
 
@@ -139,7 +132,7 @@ def build_api_server_docker_image(
 def run_api_server_in_docker(
     image_tag: str,
     config_file: t.Optional[str] = None,
-    timeout: float = 90,
+    timeout: float = 20,
 ):
     """
     Launch a bentoml service container from a docker image, yields the host URL.
@@ -151,9 +144,9 @@ def run_api_server_in_docker(
     cmd = [
         "docker",
         "run",
+        "--rm",
         "--name",
         container_name,
-        "--rm",
         "--publish",
         f"{port}:5000",
         "--env",
@@ -167,18 +160,32 @@ def run_api_server_in_docker(
         cmd.extend(
             ["-v", f"{os.path.abspath(config_file)}:/home/bentoml/bentoml_config.yml"]
         )
+    cmd.append(image_tag)
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd)  # , stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
         host_url = f"127.0.0.1:{port}"
-        _wait_until_api_server_ready(host_url, timeout)
-        yield host_url
+        if _wait_until_api_server_ready(host_url, timeout, popen=proc):
+            yield host_url
+        else:
+            raise RuntimeError(
+                f"API server {host_url} failed to start within {timeout} seconds"
+            )
     finally:
-        print(proc.communicate())
-        proc.terminate()
+        proc.kill()
+        proc.wait()
+        logger.info(
+            f"API server container {container_name} exited with code {proc.returncode}"
+        )
+        # err = proc.communicate()[1].decode("utf-8")
+        # logger.info(f"API server stdout: {err}")
         time.sleep(0.5)  # make sure container stopped & deleted
-        subprocess.call(["docker", "rm", "-f", container_name])
+        subprocess.call(
+            ["docker", "rm", "-f", container_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         time.sleep(0.5)  # make sure container stopped & deleted
 
 

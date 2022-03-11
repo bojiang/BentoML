@@ -162,6 +162,7 @@ def run_api_server_in_docker(
         )
     cmd.append(image_tag)
 
+    logger.info(f"Running API server docker image: {cmd}")
     proc = subprocess.Popen(cmd)  # , stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:

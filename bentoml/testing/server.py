@@ -132,7 +132,7 @@ def build_api_server_docker_image(
 def run_api_server_in_docker(
     image_tag: str,
     config_file: t.Optional[str] = None,
-    timeout: float = 20,
+    timeout: float = 40,
 ):
     """
     Launch a bentoml service container from a docker image, yields the host URL.
@@ -148,7 +148,7 @@ def run_api_server_in_docker(
         "--name",
         container_name,
         "--publish",
-        f"{port}:5000",
+        f"{port}:3000",
         "--env",
         "BENTOML_LOG_STDOUT=true",
         "--env",

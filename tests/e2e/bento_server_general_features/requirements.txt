@@ -2,4 +2,3 @@ pandas
 pydantic
 pillow
 scikit-learn
-git+https://github.com/bojiang/BentoML.git@4af40fb4bdc0aaa6abe1c379a5ddde5c00406d4d#egg=bentoml

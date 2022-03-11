@@ -8,9 +8,11 @@ import logging
 import contextlib
 import subprocess
 import urllib.request
+from sys import version_info as pyver
 from typing import TYPE_CHECKING
 from contextlib import contextmanager
 
+from .utils import build_e2e_docker_image
 from .._internal.utils import reserve_free_port
 from .._internal.utils import cached_contextmanager
 
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
     from starlette.datastructures import Headers
     from starlette.datastructures import FormData
 
+PYTHON_VERSION: str = f"{pyver.major}.{pyver.minor}"
 
 clean_context = contextlib.ExitStack()
 
@@ -109,12 +112,20 @@ def export_service_bundle(_):
 
 @cached_contextmanager("{project_path}, {image_tag}")
 def build_api_server_docker_image(
-    project_path: str, image_tag: t.Optional[str] = None
+    project_path: str,
+    image_tag: t.Optional[str] = None,
+    *,
+    python_version: str,
+    test_environment: t.Literal["local", "ci"] = "local",
 ) -> t.Generator[str, None, None]:
     """
     Build the docker image for a saved bentoml bundle, yield the docker image object.
     """
     import bentoml
+
+    build_e2e_docker_image(
+        python_version=python_version, test_environment=test_environment
+    )
 
     bento = bentoml.bentos.build_bentofile(build_ctx=project_path)
     tag = bento.info.tag
@@ -145,6 +156,7 @@ def run_api_server_in_docker(
         "docker",
         "run",
         "--rm",
+        "--init",
         "--name",
         container_name,
         "--publish",
@@ -256,10 +268,19 @@ def host_bento(
 ) -> t.Generator[str, None, None]:
     if not os.path.exists(config_file):
         raise Exception(f"config file not found: {config_file}")
+    if os.environ.get("GITHUB_REF", None) is not None:
+        test_environment = "ci"
+    else:
+        test_environment = "local"
 
     if docker:
         image = clean_context.enter_context(
-            build_api_server_docker_image(bento, "example_service")  # TODO
+            build_api_server_docker_image(
+                bento,
+                "example_service",
+                python_version=PYTHON_VERSION,
+                test_environment=test_environment,
+            )  # TODO
         )
         host = clean_context.enter_context(
             run_api_server_in_docker(

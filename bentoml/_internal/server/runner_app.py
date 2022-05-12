@@ -1,21 +1,21 @@
 from __future__ import annotations
-
-import json
-import typing as t
 import asyncio
-import logging
 import functools
-from typing import TYPE_CHECKING
 from functools import partial
+import json
+import logging
+import typing as t
+from typing import TYPE_CHECKING
 
-from ..trace import ServiceContext
-from ..runner.utils import PAYLOAD_META_HEADER
-from ..runner.utils import multipart_to_payload_params
-from ..server.base_app import BaseAppFactory
+from ..configuration.containers import DeploymentContainer
+from ..marshal.dispatcher import CorkDispatcher
 from ..runner.container import Payload
 from ..runner.container import AutoContainer
-from ..marshal.dispatcher import CorkDispatcher
-from ..configuration.containers import DeploymentContainer
+from ..runner.utils import PAYLOAD_META_HEADER
+from ..runner.utils import Params
+from ..runner.utils import multipart_to_payload_params
+from ..server.base_app import BaseAppFactory
+from ..trace import ServiceContext
 
 feedback_logger = logging.getLogger("bentoml.feedback")
 logger = logging.getLogger(__name__)
@@ -181,6 +181,15 @@ class RunnerAppFactory(BaseAppFactory):
             )
 
             batch_dim = runner_method.runnable_method_config.batch_dim
+
+            if batch_dim.general_dim is not None:
+                dim = batch_dim.general_dim
+                params_list_batched = Params.agg(params_list, lambda p, _: AutoContainer.from_batch_payloads(p, batch_dim=dim))
+            elif batch_dim.general_input_dim is not None:
+                dim = batch_dim.general_input_dim
+                params_list_batched = Params.agg(params_list, lambda p, _: AutoContainer.from_batch_payloads(p, batch_dim=dim))
+            else:
+                pass
 
             indices: list[int] = []
 

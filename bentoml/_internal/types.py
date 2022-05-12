@@ -1,17 +1,18 @@
 from __future__ import annotations
-
-import io
-import os
-import sys
-import typing as t
-import logging
-from types import TracebackType
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 from datetime import date
 from datetime import time
 from datetime import datetime
 from datetime import timedelta
-from dataclasses import dataclass
+import io
+import logging
+import os
+import sys
+from types import TracebackType
+import typing as t
+from typing import TYPE_CHECKING
+
+import attr
 
 from .utils.dataclasses import json_serializer
 
@@ -39,6 +40,7 @@ JSON_CHARSET = "utf-8"
 
 if TYPE_CHECKING:
     PathType = t.Union[str, os.PathLike[str]]
+    BatchDimType = tuple[list[int], int] | tuple[int, int] | int | BatchDim
 else:
     PathType = t.Union[str, os.PathLike]
 
@@ -61,7 +63,6 @@ MetadataType = t.Union[
 MetadataDict = t.Dict[str, MetadataType]
 
 JSONSerializable = t.NewType("JSONSerializable", object)
-
 
 T = t.TypeVar("T")
 

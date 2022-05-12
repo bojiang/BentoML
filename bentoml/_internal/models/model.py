@@ -1,45 +1,46 @@
 from __future__ import annotations
-
-import typing as t
-import logging
-import importlib
-from sys import version_info as pyver
-from typing import TYPE_CHECKING
+import collections
+from collections import UserDict
 from datetime import datetime
 from datetime import timezone
-from collections import UserDict
+import importlib
+import itertools
+import logging
+from sys import version_info as pyver
+import typing as t
+from typing import TYPE_CHECKING
 
-import fs
 import attr
-import yaml
-import fs.errors
-import fs.mirror
-import cloudpickle
-from fs.base import FS
 from cattr.gen import override
 from cattr.gen import make_dict_unstructure_fn
+import cloudpickle
+import fs
+from fs.base import FS
+import fs.errors
+import fs.mirror
 from simple_di import inject
 from simple_di import Provide
+import yaml
 
-from ..tag import Tag
+from ...exceptions import NotFound
+from ...exceptions import BentoMLException
+from ..configuration import BENTOML_VERSION
+from ..configuration.containers import BentoMLContainer
+from ..runner import Runner
+from ..runner import Runnable
 from ..store import Store
 from ..store import StoreItem
+from ..tag import Tag
 from ..types import MetadataDict
 from ..utils import bentoml_cattr
 from ..utils import label_validator
 from ..utils import metadata_validator
-from ..runner import Runner
-from ..runner import Runnable
-from ...exceptions import NotFound
-from ...exceptions import BentoMLException
-from ..configuration import BENTOML_VERSION
-from ..runner.runnable import BatchDimType
-from ..configuration.containers import BentoMLContainer
 
 if TYPE_CHECKING:
     from ..types import AnyType
     from ..types import PathType
 
+    BatchDimType = t.Union[tuple[list[int], int], tuple[int, int], int, "BatchDim"]
     ModelSignatureDict: t.TypeAlias = dict[
         str, bool | BatchDimType | AnyType | tuple[AnyType] | None
     ]
@@ -351,9 +352,37 @@ attr.resolve_types(ModelContext, globals(), locals())
 
 
 @attr.frozen
+class BatchDim:
+    general_dim: int|None = None
+    general_input_dim: int|None = None
+    input_dims: t.List[int]|None = None
+    output_dim: int|None = None
+
+    def __init__(self, params_dim: BatchDimType) -> None:
+        if params_dim is None:
+            self.__attrs_init__(general_dim=0)  # type: ignore
+        elif isinstance(params_dim, dict):
+            self.__attrs_init__(params_dim)  # type: ignore
+        elif isinstance(params_dim, self.__class__):
+            self.__attrs_init__(**attr.asdict(params_dim))  # type: ignore
+        elif isinstance(params_dim, int):
+            self.__attrs_init__(general_dim=params_dim)  # type: ignore
+        elif isinstance(params_dim, (tuple, list)):
+            assert len(params_dim) == 2
+            if isinstance(params_dim[0], int):
+                self.__attts_init__(general_input_dim=params_dim[0], output_dim=params_dim[1])  # type: ignore
+            elif isinstance(params_dim[0], (tuple, list)):
+                self.__attrs_init__(input_dims=params_dim[0], output_dim=params_dim[1])  # type: ignore
+            else:
+                raise ValueError(f"Invalid batch dim type: {params_dim}")
+        else:
+            raise ValueError(f"Invalid batch dim: {params_dim}")
+
+
+@attr.frozen
 class ModelSignature:
     batchable: bool = False
-    batch_dim: BatchDimType = 0
+    batch_dim: BatchDim = attr.field(converter=BatchDim, default=BatchDim(0))
     # TODO: define input/output spec struct
     input_spec: t.Any = None
     output_spec: t.Any = None
@@ -376,21 +405,21 @@ class ModelSignature:
 attr.resolve_types(ModelSignature, globals(), locals())
 
 
-def model_signature_encoder(model_signature: ModelSignature):
-    encoded = {
-        "batchable": model_signature.batchable,
-    }
-    # ignore batch_dim if batchable is False
-    if model_signature.batchable:
-        encoded["batch_dim"] = model_signature.batch_dim
-    if model_signature.input_spec is not None:
-        encoded["input_spec"] = model_signature.input_spec
-    if model_signature.output_spec is not None:
-        encoded["output_spec"] = model_signature.output_spec
-    return encoded
+# def model_signature_encoder(model_signature: ModelSignature):
+    # encoded = {
+        # "batchable": model_signature.batchable,
+    # }
+    # # ignore batch_dim if batchable is False
+    # if model_signature.batchable:
+        # encoded["batch_dim"] = attr.asdict(model_signature.batch_dim)
+    # if model_signature.input_spec is not None:
+        # encoded["input_spec"] = model_signature.input_spec
+    # if model_signature.output_spec is not None:
+        # encoded["output_spec"] = model_signature.output_spec
+    # return encoded
 
 
-bentoml_cattr.register_unstructure_hook(ModelSignature, model_signature_encoder)
+# bentoml_cattr.register_unstructure_hook(ModelSignature, model_signature_encoder)
 
 
 @attr.define(repr=False, eq=False)

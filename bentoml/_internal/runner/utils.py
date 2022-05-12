@@ -1,8 +1,7 @@
 from __future__ import annotations
-
-import typing as t
-import logging
 import itertools
+import logging
+import typing as t
 from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -58,7 +57,7 @@ class Params(t.Generic[T]):
     def agg(
         cls,
         params_list: t.Sequence[Params[T]],
-        agg_func: t.Callable[[t.Sequence[T], int], To] = lambda b, _: b,
+        agg_func: t.Callable[[t.Sequence[T], int|str], To] = lambda b, _: b,
     ) -> Params[To]:
         if not params_list:
             return Params()
@@ -75,7 +74,7 @@ class Params(t.Generic[T]):
             kwarg: t.List[T] = []
             for params in params_list:
                 kwarg.append(params.kwargs[k])
-            kwargs[k] = agg_func(kwarg, -1)
+            kwargs[k] = agg_func(kwarg, k)
         return Params(*tuple(args), **kwargs)
 
     @property

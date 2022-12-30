@@ -7,7 +7,7 @@ from bentoml.io import NumpyNdarray
 CLASS_NAMES = ["setosa", "versicolor", "virginica"]
 
 iris_clf_runner = bentoml.sklearn.get("iris_clf:latest").to_runner()
-svc = bentoml.Service("iris_classifier", runners=[iris_clf_runner])
+svc = bentoml.Service("monitor_example_classification", runners=[iris_clf_runner])
 
 
 @svc.api(

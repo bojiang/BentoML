@@ -1,7 +1,7 @@
 service: "service.py:svc"
 labels:
   owner: bentoml-team
-  project: gallery
+  project: example
 include:
 - "*.py"
 python:

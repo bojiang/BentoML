@@ -20,6 +20,7 @@ from .inference_api import InferenceAPI
 from ..runner.runner import Runner
 from ..runner.runner import AbstractRunner
 from ..io_descriptors import IODescriptor
+from ..context import service_context
 
 if TYPE_CHECKING:
     import grpc
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     from ..bento import Bento
     from ...grpc.v1 import service_pb2_grpc as services
     from .openapi.specification import OpenAPISpecification
+
+    HookFunction = t.TypeVar("HookFunction", bound=t.Callable[[t.Any], None])
 else:
     grpc, _ = import_grpc()
 
@@ -99,6 +102,9 @@ class Service:
     middlewares: t.List[
         t.Tuple[t.Type[ext.AsgiMiddleware], t.Dict[str, t.Any]]
     ] = attr.field(init=False, factory=list)
+
+    on_startups: t.List[ t.Callable[[], None] ] = attr.field(init=False, factory=list)
+    on_shutdowns: t.List[ t.Callable[[], None] ] = attr.field(init=False, factory=list)
 
     # gRPC related
     mount_servicers: list[tuple[ServicerClass, AddServicerFn, list[str]]] = attr.field(
@@ -286,6 +292,14 @@ class Service:
         from .openapi import generate_spec
 
         return generate_spec(self)
+
+    def on_startup(
+        self,
+        func: HookFunction,
+    ) -> HookFunction:
+        """Decorator for adding InferenceAPI to this service"""
+        self.on_startups.append(functools.partial(func, self))
+
 
     def on_asgi_app_startup(self) -> None:
         pass

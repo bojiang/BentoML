@@ -257,7 +257,7 @@ class HTTPAppFactory(BaseAppFactory):
 
     @property
     def on_startup(self) -> list[t.Callable[[], None]]:
-        on_startup = [self.bento_service.on_asgi_app_startup]
+        on_startup = self.bento_service.on_startups + [self.bento_service.on_asgi_app_startup]
         if BentoMLContainer.development_mode.get():
             for runner in self.bento_service.runners:
                 on_startup.append(functools.partial(runner.init_local, quiet=True))
@@ -284,7 +284,7 @@ class HTTPAppFactory(BaseAppFactory):
 
     @property
     def on_shutdown(self) -> list[t.Callable[[], None]]:
-        on_shutdown = [self.bento_service.on_asgi_app_shutdown]
+        on_shutdown = self.bento_service.on_shutdowns + [self.bento_service.on_asgi_app_shutdown]
         for runner in self.bento_service.runners:
             on_shutdown.append(runner.destroy)
         on_shutdown.extend(super().on_shutdown)

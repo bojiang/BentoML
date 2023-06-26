@@ -140,7 +140,7 @@ grpc = [
     "protobuf",
     "grpcio",
     "grpcio-health-checking",
-    "opentelemetry-instrumentation-grpc==0.38b0",
+    "opentelemetry-instrumentation-grpc==0.39b0",
 ]
 grpc-reflection = ["bentoml[grpc]", "grpcio-reflection"]
 grpc-channelz = ["bentoml[grpc]", "grpcio-channelz"]

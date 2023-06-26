@@ -51,6 +51,7 @@ from ._internal.utils.http import Cookie
 from ._internal.yatai_client import YataiClient
 from ._internal.monitoring.api import monitor
 from ._internal.service.loader import load
+from ._internal.runner.strategy import Strategy
 
 # Framework specific modules, model management and IO APIs are lazily loaded upon import.
 if TYPE_CHECKING:
@@ -164,6 +165,7 @@ __all__ = [
     "Model",
     "Runner",
     "Runnable",
+    "Strategy",
     "YataiClient",  # Yatai REST API Client
     # bento APIs
     "list",

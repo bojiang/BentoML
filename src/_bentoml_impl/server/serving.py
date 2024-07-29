@@ -53,7 +53,10 @@ if POSIX and not IS_WSL:
         socket_path = os.path.join(uds_path, f"{id(service)}.sock")
         assert len(socket_path) < MAX_AF_UNIX_PATH_LENGTH
         return path_to_uri(socket_path), CircusSocket(
-            name=service.name, path=socket_path, backlog=backlog
+            name=service.name,
+            path=socket_path,
+            backlog=backlog,
+            so_reuseport=True,
         )
 
 elif WINDOWS or IS_WSL:
@@ -75,6 +78,7 @@ elif WINDOWS or IS_WSL:
             name=service.name,
             host=runner_host,
             port=runner_port,
+            so_reuseport=True,
             backlog=backlog,
         )
 
@@ -254,6 +258,7 @@ def serve_http(
                 name=API_SERVER_NAME,
                 host=host,
                 port=port,
+                so_reuseport=True,
                 family=family,
                 backlog=backlog,
             )

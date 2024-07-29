@@ -73,6 +73,7 @@ def create_circus_socket_from_uri(
             name=name,
             host=parsed.hostname,
             port=parsed.port,
+            so_reuseport=True,
             *args,
             **kwargs,
         )

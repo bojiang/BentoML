@@ -431,6 +431,7 @@ def serve_http_production(
 
     circus_socket_map[API_SERVER_NAME] = CircusSocket(
         name=API_SERVER_NAME,
+        so_reuseport=True,
         host=host,
         port=port,
         family=family,
@@ -736,6 +737,7 @@ def serve_grpc_production(
         circus_socket_map[PROMETHEUS_SERVER_NAME] = CircusSocket(
             name=PROMETHEUS_SERVER_NAME,
             host=metrics_host,
+            so_reuseport=True,
             port=metrics_port,
             backlog=backlog,
         )
